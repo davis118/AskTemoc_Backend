@@ -1,8 +1,18 @@
 from fastapi import FastAPI
-from app.api.endpoints import query, documents, pinecone, dashboard, rag_endpoint
+from fastapi.middleware.cors import CORSMiddleware
+from app.api.endpoints import query, documents, pinecone, dashboard, rag_endpoint, health
 from app.db.database import init_db
 
 app = FastAPI(title="AskTemoc Backend")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Initialize database on startup
 @app.on_event("startup")
@@ -15,3 +25,4 @@ app.include_router(documents.router, prefix="/api", tags=['documents'])
 app.include_router(pinecone.router, prefix="/api", tags=['pinecone'])
 app.include_router(dashboard.router, prefix="/api", tags=['dashboard'])
 app.include_router(rag_endpoint.router, prefix="/api", tags=['rag'])
+app.include_router(health.router, prefix="/api/health", tags=['health'])
