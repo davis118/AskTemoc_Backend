@@ -5,7 +5,7 @@ import os
 
 class RetrieverService:
     def __init__(self, collection_name="asktemoc_collection"):
-        self.client = chromadb.PersistentClient(path=os.getenv("CHROMA_PERSIST_DIRECTORY", "./chroma_db"))
+        self.client = chromadb.PersistentClient(path=os.getenv("CHROMA_PERSIST_DIRECTORY"))
         self.collection_name = collection_name
         self.embeddings = OllamaEmbeddings(model=os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text"))
 

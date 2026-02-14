@@ -20,8 +20,8 @@ class DataIngestionService:
     def __init__(self):
         """Initialize the data ingestion service with ChromaDB and embeddings."""
         self.data_dir = "services/data"
-        self.chroma_persist_dir = "./chroma_db"
-        self.collection_name = "asktemoc_collection"
+        self.chroma_persist_dir = os.getenv("CHROMA_PERSIST_DIRECTORY")
+        self.collection_name = os.getenv("CHROMA_COLLECTION_NAME")
         
         # Initialize embeddings
         self.embeddings = OllamaEmbeddings(
