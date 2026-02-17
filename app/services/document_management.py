@@ -166,7 +166,7 @@ class DocumentManagementUtils:
                     {
                         "id": emb.id,
                         "model": emb.model,
-                        "pinecone_id": emb.pinecone_id,
+                        "chroma_id": emb.chroma_id,
                         "is_synced": emb.is_synced,
                         "vector_length": len(emb.vector) if emb.vector else 0,
                     }
@@ -233,7 +233,7 @@ class DocumentManagementUtils:
 
     @staticmethod
     def get_sync_status_summary(db: Session) -> Dict[str, Any]:
-        """Get overall sync status of all embeddings to Pinecone."""
+        """Get overall sync status of all embeddings to ChromaDB."""
         total_embeddings = db.query(func.count(Embedding.id)).scalar() or 0
         synced_embeddings = (
             db.query(func.count(Embedding.id))

@@ -88,7 +88,7 @@ class EmbeddingCreate(BaseModel):
 class EmbeddingUpdate(BaseModel):
     """Schema for updating an embedding."""
     vector: Optional[List[float]] = None
-    pinecone_id: Optional[str] = None
+    chroma_id: Optional[str] = None
 
 
 class EmbeddingResponse(BaseModel):
@@ -96,7 +96,7 @@ class EmbeddingResponse(BaseModel):
     id: str
     chunk_id: str
     model: Optional[str]
-    pinecone_id: Optional[str]
+    chroma_id: Optional[str]
     is_synced: bool
     created_at: datetime
     updated_at: datetime
@@ -114,15 +114,15 @@ class BatchChunkCreate(BaseModel):
 
 
 class BatchEmbeddingSync(BaseModel):
-    """Schema for batch syncing embeddings to Pinecone."""
+    """Schema for batch syncing embeddings to ChromaDB."""
     embedding_ids: Optional[List[str]] = None
     document_id: Optional[str] = None
     sync_all_unsynced: bool = False
 
 
-# Pinecone Export Responses
-class PineconeExportResponse(BaseModel):
-    """Response for Pinecone export operation."""
+# ChromaDB Export Responses
+class ChromaExportResponse(BaseModel):
+    """Response for ChromaDB export operation."""
     status: str
     message: Optional[str] = None
     upserted_count: Optional[int] = None
@@ -130,8 +130,8 @@ class PineconeExportResponse(BaseModel):
     error: Optional[str] = None
 
 
-class PineconeIndexStats(BaseModel):
-    """Pinecone index statistics."""
+class ChromaIndexStats(BaseModel):
+    """ChromaDB index statistics."""
     status: str
     stats: Optional[Dict[str, Any]] = None
     error: Optional[str] = None

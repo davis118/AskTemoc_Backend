@@ -128,6 +128,6 @@ def get_recent_activity(days: int = 7, limit: int = 100, db: Session = Depends(g
 
 @router.get("/sync-status")
 def get_sync_status(db: Session = Depends(get_db)):
-    """Get current sync status with Pinecone."""
+    """Get current sync status with ChromaDB."""
     sync_status = DocumentManagementUtils.get_sync_status_summary(db=db)
     return sync_status

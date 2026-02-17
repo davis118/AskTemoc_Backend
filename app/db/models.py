@@ -65,23 +65,23 @@ class Embedding(Base):
     """
     __tablename__ = "embeddings"
 
-    id = Column(String, primary_key=True, index=True)  # UUID or pinecone_id
+    id = Column(String, primary_key=True, index=True)  # UUID or chroma_id
     chunk_id = Column(String, ForeignKey("chunks.id"), nullable=False, index=True)
     vector = Column(JSON, nullable=True)  # Store as JSON array for flexibility
     model = Column(String(100), nullable=True)  # Model used (e.g., "text-embedding-ada-002")
-    pinecone_id = Column(String(255), nullable=True, index=True)  # Reference to Pinecone ID
+    chroma_id = Column(String(255), nullable=True, index=True)  # Reference to ChromaDB ID
     is_synced = Column(Boolean, default=False, index=True)  # Track sync status
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_synced_at = Column(DateTime, nullable=True)
-    
+
     # Relationships
     chunk = relationship("Chunk", back_populates="embeddings")
 
     __table_args__ = (
-        Index("idx_pinecone_id", "pinecone_id"),
+        Index("idx_chroma_id", "chroma_id"),
         Index("idx_is_synced", "is_synced"),
     )
 
     def __repr__(self):
-        return f"<Embedding(id={self.id}, chunk_id={self.chunk_id}, pinecone_id={self.pinecone_id})>"
+        return f"<Embedding(id={self.id}, chunk_id={self.chunk_id}, chroma_id={self.chroma_id})>"

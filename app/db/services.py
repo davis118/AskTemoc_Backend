@@ -220,7 +220,7 @@ class EmbeddingService:
         chunk_id: str,
         vector: List[float],
         model: str = "text-embedding-ada-002",
-        pinecone_id: Optional[str] = None,
+        chroma_id: Optional[str] = None,
         embedding_id: Optional[str] = None,
     ) -> Embedding:
         """Create a new embedding."""
@@ -229,7 +229,7 @@ class EmbeddingService:
             chunk_id=chunk_id,
             vector=vector,
             model=model,
-            pinecone_id=pinecone_id,
+            chroma_id=chroma_id,
             is_synced=False,
         )
         db.add(embedding)
@@ -254,7 +254,7 @@ class EmbeddingService:
 
     @staticmethod
     def list_unsynced_embeddings(db: Session, limit: int = 100) -> List[Embedding]:
-        """List embeddings not yet synced to Pinecone."""
+        """List embeddings not yet synced to ChromaDB."""
         return (
             db.query(Embedding)
             .filter(Embedding.is_synced == False)
@@ -267,7 +267,7 @@ class EmbeddingService:
         db: Session,
         embedding_id: str,
         vector: Optional[List[float]] = None,
-        pinecone_id: Optional[str] = None,
+        chroma_id: Optional[str] = None,
         is_synced: Optional[bool] = None,
     ) -> Optional[Embedding]:
         """Update an embedding."""
@@ -277,8 +277,8 @@ class EmbeddingService:
 
         if vector is not None:
             embedding.vector = vector
-        if pinecone_id is not None:
-            embedding.pinecone_id = pinecone_id
+        if chroma_id is not None:
+            embedding.chroma_id = chroma_id
         if is_synced is not None:
             embedding.is_synced = is_synced
             if is_synced:
@@ -302,15 +302,15 @@ class EmbeddingService:
 
     @staticmethod
     def mark_synced(
-        db: Session, embedding_id: str, pinecone_id: str
+        db: Session, embedding_id: str, chroma_id: str
     ) -> Optional[Embedding]:
-        """Mark an embedding as synced to Pinecone."""
+        """Mark an embedding as synced to ChromaDB."""
         embedding = EmbeddingService.get_embedding(db, embedding_id)
         if not embedding:
             return None
 
         embedding.is_synced = True
-        embedding.pinecone_id = pinecone_id
+        embedding.chroma_id = chroma_id
         embedding.last_synced_at = datetime.utcnow()
         db.commit()
         db.refresh(embedding)

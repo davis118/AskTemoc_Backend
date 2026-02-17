@@ -267,7 +267,7 @@ def update_embedding(
         db=db,
         embedding_id=embedding_id,
         vector=embedding_data.vector,
-        pinecone_id=embedding_data.pinecone_id,
+        chroma_id=embedding_data.chroma_id,
     )
     if not embedding:
         raise HTTPException(
