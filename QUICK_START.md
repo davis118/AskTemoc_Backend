@@ -104,26 +104,63 @@ GET    /sync-status                 - Sync statistics
 
 ## Quick Start
 
-### 1. Setup Environment
-```bash
-# Copy environment template
-cp .env.example .env
+### Requirements
 
+- Python 3.13+
+- [`ollama`](https://ollama.com/) installed and running (for future integration, currently mocked)
+- `pip` (Python package installer)
+- Git
+
+---
+
+### Clone the Repository
+
+```bash
+git clone https://github.com/Conwenu/AskTemoc_Backend.git
+cd path/to/project-root
 ```
 
-### 2. Install Dependencies
+---
+
+### Install Dependencies
+
+Make sure you're in a **virtual environment**:
+
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+Install required packages:
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Run Application
+---
+
+### Make Sure Ollama is Installed
+
+Ensure [`ollama`](https://ollama.com/) is installed and running locally.
+
+```bash
+ollama run llama3  # Or any other model you plan to use
+```
+
+---
+
+### Run the FastAPI Server
+
+You can start the server using:
+
 ```bash
 uvicorn app.main:app --reload
 ```
 
-Database will be automatically initialized on startup.
+- Visit Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
 
-### 4. Example: Create Document with Chunks
+
+### Example: Create Document with Chunks
 
 ```bash
 # 1. Create document
