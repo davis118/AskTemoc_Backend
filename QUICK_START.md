@@ -11,14 +11,14 @@ app/
 │   └── services.py              # CRUD service classes
 │
 ├── services/                    # Business logic services
-│   ├── pinecone_service.py      # Pinecone export & sync operations
+│   ├── chroma_service.py      # ChromaDB export & sync operations
 │   ├── document_management.py   # High-level document utilities & dashboard helpers
 │   ├── rag_service.py           # (existing) RAG operations
 │   └── ...other services
 │
 ├── api/endpoints/               # FastAPI route handlers
 │   ├── documents.py             # Document/Chunk/Embedding CRUD endpoints
-│   ├── pinecone.py              # Pinecone sync/export endpoints
+│   ├── chroma.py              # ChromaDB sync/export endpoints
 │   ├── dashboard.py             # Analytics & dashboard endpoints
 │   ├── query.py                 # (existing) Query endpoints
 │   └── __init__.py
@@ -44,7 +44,7 @@ config/
 ### 1. Database Models (`app/db/models.py`)
 - **Document**: Stores document metadata (title, source, custom metadata)
 - **Chunk**: Text fragments extracted from documents with sequence ordering
-- **Embedding**: Vector embeddings with Pinecone sync tracking
+- **Embedding**: Vector embeddings with ChromaDB sync tracking
 
 ### 2. Service Layer (`app/db/services.py`)
 - `DocumentService`: Create, read, update, delete documents
@@ -80,14 +80,14 @@ PUT    /embeddings/{id}          - Update embedding
 DELETE /embeddings/{id}          - Delete embedding
 ```
 
-#### Pinecone Export (`/api/pinecone`)
+#### ChromaDB Export (`/api/chroma`)
 ```
 POST   /export/document/{id}     - Export document embeddings
 POST   /export/unsynced          - Export unsynced embeddings
 POST   /export/batch             - Export specific embeddings
-DELETE /vectors                  - Delete from Pinecone
+DELETE /vectors                  - Delete from ChromaDB
 GET    /index/stats              - Get index statistics
-GET    /search                   - Search Pinecone
+GET    /search                   - Search ChromaDB
 ```
 
 #### Dashboard (`/api/dashboard`)
@@ -109,8 +109,6 @@ GET    /sync-status                 - Sync statistics
 # Copy environment template
 cp .env.example .env
 
-# Edit .env and add Pinecone credentials
-PINECONE_API_KEY=your_key_here
 ```
 
 ### 2. Install Dependencies
@@ -184,13 +182,13 @@ CREATE TABLE embeddings (
   chunk_id TEXT NOT NULL REFERENCES chunks(id),
   vector JSON,
   model VARCHAR(100),
-  pinecone_id VARCHAR(255),
+  chroma_id VARCHAR(255),
   is_synced BOOLEAN DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_synced_at DATETIME
 );
-CREATE INDEX idx_pinecone_id ON embeddings(pinecone_id);
+CREATE INDEX idx_chroma_id ON embeddings(chroma_id);
 CREATE INDEX idx_is_synced ON embeddings(is_synced);
 ```
 
@@ -221,20 +219,20 @@ ChunkService.get_chunks_by_ids(db, chunk_ids)
 EmbeddingService.create_embedding(db, chunk_id, vector, model)
 EmbeddingService.get_embedding(db, embedding_id)
 EmbeddingService.list_unsynced_embeddings(db, limit)
-EmbeddingService.mark_synced(db, embedding_id, pinecone_id)
-EmbeddingService.update_embedding(db, embedding_id, vector, pinecone_id, is_synced)
+EmbeddingService.mark_synced(db, embedding_id, chroma_id)
+EmbeddingService.update_embedding(db, embedding_id, vector, chroma_id, is_synced)
 EmbeddingService.delete_embedding(db, embedding_id)
 EmbeddingService.get_embeddings_by_document(db, document_id)
 ```
 
-### PineconeExportService
+### ChromaService
 ```python
-pinecone_svc = PineconeExportService()
-pinecone_svc.upsert_vectors(db, embeddings)  # Send to Pinecone
-pinecone_svc.export_document_embeddings(db, document_id)
-pinecone_svc.export_unsynced_embeddings(db, batch_size)
-pinecone_svc.delete_from_pinecone(vector_ids)
-pinecone_svc.search_pinecone(query_vector, top_k)
+chroma_svc = ChromaService()
+chroma_svc.upsert_vectors(db, embeddings)  # Send to ChromaDB
+chroma_svc.export_document_embeddings(db, document_id)
+chroma_svc.export_unsynced_embeddings(db, batch_size)
+chroma_svc.delete_from_chroma(vector_ids)
+chroma_svc.search_chroma(query_vector, top_k)
 ```
 
 ### DocumentManagementUtils
@@ -266,22 +264,22 @@ for chunk in chunks:
     vector = embedding_model.encode(chunk.text)
     embedding = EmbeddingService.create_embedding(db, chunk.id, vector)
 
-# 4. Export to Pinecone
-pinecone_svc = PineconeExportService()
-result = pinecone_svc.export_document_embeddings(db, doc.id)
+# 4. Export to ChromaDB
+chroma_svc = ChromaService()
+result = chroma_svc.export_document_embeddings(db, doc.id)
 ```
 
 ### Workflow 2: Query with RAG
 ```python
-# 1. Search Pinecone with query embedding
+# 1. Search ChromaDB with query embedding
 query_vector = embedding_model.encode(user_query)
-pinecone_svc = PineconeExportService()
-results = pinecone_svc.search_pinecone(query_vector, top_k=5)
+chroma_svc = ChromaService()
+results = chroma_svc.search_chroma(query_vector, top_k=5)
 
 # 2. Retrieve full chunk data from database
 for match in results['matches']:
-    pinecone_id = match['id']
-    embedding = db.query(Embedding).filter(Embedding.pinecone_id == pinecone_id).first()
+    chroma_id = match['id']
+    embedding = db.query(Embedding).filter(Embedding.chroma_id == chroma_id).first()
     chunk = EmbeddingService.get_embedding(db, embedding.id).chunk
     # Use chunk.text in LLM context
 ```
@@ -306,9 +304,8 @@ Interactive API docs (Swagger UI): `http://localhost:8000/docs`
 ```
 DATABASE_URL              SQLite or PostgreSQL connection string
 DB_ECHO                  Enable SQL query logging (true/false)
-PINECONE_API_KEY        Your Pinecone API key (required)
-PINECONE_ENVIRONMENT    Pinecone region (default: us-east-1)
-PINECONE_INDEX_NAME     Pinecone index name (default: asktemoc)
+CHROMA_PERSIST_DIRECTORY Directory for ChromaDB persistence (default: ./app/chroma_db)
+CHROMA_COLLECTION_NAME   ChromaDB collection name (default: asktemoc)
 ```
 
 ## Troubleshooting
@@ -318,10 +315,10 @@ PINECONE_INDEX_NAME     Pinecone index name (default: asktemoc)
 - Ensure write permissions in working directory
 - For PostgreSQL, verify connection string format
 
-### Pinecone export fails
-- Verify PINECONE_API_KEY is set correctly
+### ChromaDB export fails
+- Verify CHROMA_PERSIST_DIRECTORY is writable
 - Check embeddings have valid vectors
-- Ensure index exists in Pinecone
+- Ensure ChromaDB collection can be created
 
 ### Slow queries
 - Use pagination (limit parameter)

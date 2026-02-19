@@ -1,5 +1,83 @@
 # Changelog
 
+## Date: February 17, 2026
+
+-   **feat**: Migrated from Pinecone to ChromaDB for vector storage, removing external API dependency and simplifying the architecture
+
+### Files Created
+
+1.  **app/services/chroma_service.py** (NEW) - 264 lines
+    -   ChromaService class replacing PineconeExportService
+    -   Local persistent storage using ChromaDB
+    -   Methods: upsert_vectors, export_document_embeddings, export_unsynced_embeddings, delete_from_chroma, search_chroma, get_collection_stats
+
+2.  **app/api/endpoints/chroma.py** (NEW) - 175 lines
+    -   6 ChromaDB API endpoints replacing Pinecone endpoints
+    -   Endpoints: export/document, export/unsynced, export/batch, delete vectors, index stats, search
+
+### Files Modified
+
+1.  **app/db/models.py** (MODIFIED)
+    -   Renamed `pinecone_id` column to `chroma_id` in Embedding model
+    -   Updated index from `idx_pinecone_id` to `idx_chroma_id`
+    -   Updated repr method
+
+2.  **app/db/services.py** (MODIFIED)
+    -   Updated EmbeddingService methods to use `chroma_id` instead of `pinecone_id`
+    -   Methods updated: create_embedding, update_embedding, mark_synced, list_unsynced_embeddings
+
+3.  **app/services/document_management.py** (MODIFIED)
+    -   Updated export_document_to_json to use `chroma_id`
+    -   Updated get_sync_status_summary docstring to reference ChromaDB
+
+4.  **app/schemas/db_schemas.py** (MODIFIED)
+    -   Renamed PineconeExportResponse → ChromaExportResponse
+    -   Renamed PineconeIndexStats → ChromaIndexStats
+    -   Updated EmbeddingUpdate and EmbeddingResponse to use `chroma_id`
+    -   Updated BatchEmbeddingSync docstring
+
+5.  **app/api/endpoints/documents.py** (MODIFIED)
+    -   Updated update_embedding endpoint to pass `chroma_id`
+
+6.  **app/api/endpoints/dashboard.py** (MODIFIED)
+    -   Updated sync-status endpoint docstring
+
+7.  **app/main.py** (MODIFIED)
+    -   Changed import from pinecone to chroma
+    -   Updated router inclusion
+
+8.  **.env.example** (MODIFIED)
+    -   Removed Pinecone configuration variables
+    -   Kept ChromaDB configuration
+
+9.  **app/.env** (MODIFIED)
+    -   Removed Pinecone configuration variables
+
+### Files Deleted
+
+1.  **app/services/pinecone_service.py** (DELETED)
+    -   Removed PineconeExportService class
+
+2.  **app/api/endpoints/pinecone.py** (DELETED)
+    -   Removed Pinecone API endpoints
+
+### API Changes
+
+- Endpoint prefix changed from `/api/pinecone` to `/api/chroma`
+- All endpoint functionality preserved with ChromaDB backend
+
+### Configuration Changes
+
+- Removed: PINECONE_API_KEY, PINECONE_ENVIRONMENT, PINECONE_INDEX_NAME
+- Using: CHROMA_PERSIST_DIRECTORY, CHROMA_COLLECTION_NAME
+
+### Benefits
+
+- No external API dependency
+- Local persistent storage
+- Simplified architecture
+- Cost reduction (no Pinecone subscription needed)
+
 ## Date: November 20, 2025
 
 -   **feat**: Connected ChromaDB RAG pipeline to existing asktemoc.db database with university program data

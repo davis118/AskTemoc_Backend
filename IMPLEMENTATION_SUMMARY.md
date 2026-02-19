@@ -2,7 +2,7 @@
 
 ## Overview
 
-Successfully implemented a complete SQLite relational schema with FastAPI endpoints for document management, embeddings storage, and Pinecone export pipeline. The system is production-ready with comprehensive CRUD operations, batch utilities, and dashboard analytics.
+Successfully implemented a complete SQLite relational schema with FastAPI endpoints for document management, embeddings storage, and ChromaDB export pipeline. The system is production-ready with comprehensive CRUD operations, batch utilities, and dashboard analytics.
 
 **Total Code Added:** 1,788 lines of well-documented, tested Python code
 
@@ -29,7 +29,7 @@ Successfully implemented a complete SQLite relational schema with FastAPI endpoi
    - Proper error handling and status codes
    - Input validation with Pydantic
 
-4. **Pinecone Export Pipeline**
+4. **ChromaDB Export Pipeline**
    - Vector upsert with metadata
    - Batch sync operations
    - Sync status tracking
@@ -68,8 +68,8 @@ Successfully implemented a complete SQLite relational schema with FastAPI endpoi
    - Module exports for clean imports
 
 ### Service Layer
-5. **`app/services/pinecone_service.py`** (NEW)
-   - `PineconeExportService`: Vector upsert, metadata sync
+5. **`app/services/chroma_service.py`** (NEW)
+   - `ChromaService`: Vector upsert, metadata sync
    - Prepare vectors with rich metadata
    - Batch export operations
    - Vector search and deletion
@@ -91,8 +91,8 @@ Successfully implemented a complete SQLite relational schema with FastAPI endpoi
    - Embedding CRUD
    - Full routing for document hierarchy
 
-8. **`app/api/endpoints/pinecone.py`** (NEW)
-   - Export endpoints for Pinecone sync
+8. **`app/api/endpoints/chroma.py`** (NEW)
+   - Export endpoints for ChromaDB sync
    - Document-specific export
    - Batch and unsynced export
    - Vector deletion
@@ -117,15 +117,15 @@ Successfully implemented a complete SQLite relational schema with FastAPI endpoi
 11. **`app/main.py`** (MODIFIED)
     - Added startup event for database initialization
     - Integrated all new routers
-    - Organized by feature (documents, pinecone, dashboard)
+    - Organized by feature (documents, chroma, dashboard)
 
 12. **`requirements.txt`** (MODIFIED)
-    - Added `pinecone-client==5.0.1`
+    - Added `chromadb`
     - SQLAlchemy already present
 
 13. **`.env.example`** (NEW)
     - Environment configuration template
-    - Pinecone credentials
+    - ChromaDB settings
     - Database options
 
 14. **`DATABASE_API_DOCS.md`** (NEW)
@@ -155,14 +155,14 @@ documents (1)
 - **Soft Deletes**: `is_deleted` flag prevents accidental data loss
 - **Metadata Storage**: JSON columns for flexible data
 - **Timestamps**: `created_at`, `updated_at` for audit trails
-- **Sync Tracking**: `is_synced`, `pinecone_id` for Pinecone management
+- **Sync Tracking**: `is_synced`, `chroma_id` for ChromaDB management
 - **Indexing**: Composite and individual indexes for performance
 
 ### Database Indexes
 - `documents.created_at`, `is_deleted`
 - `chunks.(document_id, chunk_index)` - Composite index
 - `chunks.is_deleted`
-- `embeddings.pinecone_id`, `is_synced`
+- `embeddings.chroma_id`, `is_synced`
 
 ## API Endpoints (40+)
 
@@ -180,7 +180,7 @@ documents (1)
 - POST, GET/{id}, PUT/{id}, DELETE/{id}
 - Total: 4 endpoints
 
-### Pinecone (`/api/pinecone` - 6 endpoints)
+### ChromaDB (`/api/chroma` - 6 endpoints)
 - POST /export/document/{id}
 - POST /export/unsynced
 - POST /export/batch
@@ -214,11 +214,11 @@ documents (1)
 - Soft and hard delete options
 - Search and filtering capabilities
 
-### 3. Pinecone Integration ✅
+### 3. ChromaDB Integration ✅
 - Vector metadata preparation with document/chunk context
-- Batch upsert to Pinecone
+- Batch upsert to ChromaDB
 - Sync status tracking
-- Automatic pinecone_id assignment
+- Automatic chroma_id assignment
 - Vector deletion capability
 - Vector search integration
 
@@ -251,9 +251,8 @@ documents (1)
 ```
 DATABASE_URL              # SQLite or PostgreSQL
 DB_ECHO                  # SQL logging (true/false)
-PINECONE_API_KEY        # Required for export
-PINECONE_ENVIRONMENT    # AWS region
-PINECONE_INDEX_NAME     # Index name
+CHROMA_PERSIST_DIRECTORY # Directory for ChromaDB persistence
+CHROMA_COLLECTION_NAME   # Collection name
 ```
 
 ### Database Support
@@ -281,7 +280,7 @@ Database Engine (app/db/database.py)
 - **DocumentService**: Document lifecycle
 - **ChunkService**: Chunk management and organization
 - **EmbeddingService**: Embedding storage and sync
-- **PineconeExportService**: External vector DB synchronization
+- **ChromaService**: External vector DB synchronization
 - **DocumentManagementUtils**: High-level business operations
 
 ## Usage Patterns
@@ -311,11 +310,11 @@ Database Engine (app/db/database.py)
 4. Return ranked results
 ```
 
-### Pattern 4: Pinecone Sync
+### Pattern 4: ChromaDB Sync
 ```python
 1. Find unsynced embeddings
 2. Prepare vectors with metadata
-3. Batch upsert to Pinecone
+3. Batch upsert to ChromaDB
 4. Update sync status in DB
 ```
 
@@ -401,7 +400,7 @@ This implementation provides a production-ready database and API layer for the A
 
 - ✅ **Relational Schema**: Documents → Chunks → Embeddings with metadata
 - ✅ **Complete CRUD Operations**: Full lifecycle management
-- ✅ **Pinecone Export Pipeline**: Vector sync with metadata storage
+- ✅ **ChromaDB Export Pipeline**: Vector sync with metadata storage
 - ✅ **Document Management Utilities**: Dashboard and batch operations
 - ✅ **FastAPI Integration**: 40+ endpoints, proper validation
 - ✅ **Error Handling**: Comprehensive error management
