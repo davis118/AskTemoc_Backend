@@ -41,6 +41,19 @@ class DocumentService:
         ).first()
 
     @staticmethod
+    def get_document_by_source(db: Session, source: str) -> Optional[Document]:
+        return (
+            db.query(Document)
+            .filter(
+                and_(
+                    Document.source == source,
+                    Document.is_deleted == False
+                )
+            )
+            .first()
+        )
+    
+    @staticmethod
     def list_documents(
         db: Session, skip: int = 0, limit: int = 100, include_deleted: bool = False
     ) -> List[Document]:

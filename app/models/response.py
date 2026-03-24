@@ -1,6 +1,6 @@
-from pydantic import BaseModel
-from typing import List, Dict, Union
+from pydantic import BaseModel, Field
+from typing import List, Dict, Union, Optional
 
 class QueryResponse(BaseModel):
     answer: str
-    # sources: List[Union[str, Dict]]
+    sources: Optional[List[Union[str, Dict]]] = Field(default=None)

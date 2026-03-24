@@ -1,4 +1,4 @@
-from langchain_community.llms import Ollama
+from langchain_ollama import OllamaLLM
 from langchain_core.runnables import RunnablePassthrough, RunnableParallel
 from langchain_core.output_parsers import StrOutputParser
 
@@ -9,7 +9,7 @@ import os
 class RagChainService:
     def __init__(self):
         self.retriever = retriever_service.get_retriever()
-        self.llm = Ollama(model=os.getenv("OLLAMA_MODEL", "llama3.1:8b"), base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
+        self.llm = OllamaLLM(model=os.getenv("OLLAMA_MODEL", "llama3.1:8b"), base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
 
     def get_chain(self):
         def format_docs(docs):

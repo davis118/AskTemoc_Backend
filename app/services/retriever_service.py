@@ -1,6 +1,6 @@
 import chromadb
 from langchain_chroma import Chroma
-from langchain_community.embeddings import OllamaEmbeddings
+from langchain_ollama import OllamaEmbeddings
 import os
 
 class RetrieverService:
@@ -16,5 +16,19 @@ class RetrieverService:
             embedding_function=self.embeddings,
         )
         return vector_store.as_retriever()
+    
+    def search(self, query: str, k: int = 5):
+        vector_store = Chroma(
+            client=self.client,
+            collection_name=self.collection_name,
+            embedding_function=self.embeddings,
+        )
+
+        results = vector_store.similarity_search(
+            query,
+            k=k
+        )
+
+        return results
 
 retriever_service = RetrieverService()

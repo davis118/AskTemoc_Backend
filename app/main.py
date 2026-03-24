@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.endpoints import query, documents, chroma, dashboard, rag_endpoint, health
+from app.api.endpoints import ingest, query, rag_endpoint, health, search
 from app.db.database import init_db
 
 app = FastAPI(title="AskTemoc Backend")
@@ -21,8 +21,10 @@ def startup_event():
 
 # Include routers
 app.include_router(query.router, prefix="/api/query", tags=['query'])
-app.include_router(documents.router, prefix="/api", tags=['documents'])
-app.include_router(chroma.router, prefix="/api", tags=['chroma'])
-app.include_router(dashboard.router, prefix="/api", tags=['dashboard'])
+# app.include_router(documents.router, prefix="/api", tags=['documents'])
+# app.include_router(chroma.router, prefix="/api", tags=['chroma'])
+# app.include_router(dashboard.router, prefix="/api", tags=['dashboard'])
+app.include_router(search.router, prefix="/api/search", tags=['search'])
 app.include_router(rag_endpoint.router, prefix="/api", tags=['rag'])
 app.include_router(health.router, prefix="/api/health", tags=['health'])
+app.include_router(ingest.router, prefix="/api/embed", tags=['embed'])

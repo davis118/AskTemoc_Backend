@@ -10,6 +10,8 @@ test*.ipynb
 
 /pipe*
 
+.env
+
 /school_crawl_output
 
 *_test.*
@@ -18,3 +20,10 @@ test*.ipynb
 /crawled_content*/
 
 chroma_db/
+
+*.db
+*.sqlite
+
+/test
+
+/workspace
