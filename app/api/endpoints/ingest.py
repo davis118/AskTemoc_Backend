@@ -28,10 +28,8 @@ vector_store = Chroma(
 ingest_service = IngestService(
     splitter=splitter,
     embedding_function=retriever_service.embeddings.embed_query,
-    # vector_store=retriever_service.get_retriever().vectorstore
     vector_store=vector_store
 )
-
 
 
 @router.get("/")

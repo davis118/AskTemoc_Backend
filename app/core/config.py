@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -10,9 +11,15 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: str
     OLLAMA_BASE_URL: str
     OLLAMA_EMBEDDING_MODEL: str
-    CHROMA_PERSIST_DIRECTORY: str
+    OLLAMA_TEMPERATURE: float = 0.4
+    CHROMA_PERSIST_DIRECTORY: Path
     CHROMA_COLLECTION_NAME: str
     model_config = SettingsConfigDict(env_file=".env")
+    
+    @property
+    def chroma_persist_path(self) -> Path:
+        project_root = Path(__file__).resolve().parent.parent
+        return (project_root / self.CHROMA_PERSIST_DIRECTORY).resolve()
 
 
 def get_settings() -> Settings:

@@ -2,6 +2,8 @@ from langchain_ollama import OllamaLLM
 from typing import Optional
 import os
 import random
+from pathlib import Path
+from app.core.config import get_settings
 
 class LLMService:
     def __init__(
@@ -10,16 +12,13 @@ class LLMService:
         temperature: Optional[float] = None,
         base_url: Optional[str] = None,
     ):
-        self.model = model or os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+        settings = get_settings()
+        self.model = model or settings.OLLAMA_MODEL
         self.temperature = (
-            temperature
-            if temperature is not None
-            else float(os.getenv("OLLAMA_TEMPERATURE", 0.4))
+            temperature if temperature is not None else settings.OLLAMA_TEMPERATURE
         )
-        self.base_url = base_url or os.getenv(
-            "OLLAMA_BASE_URL",
-            "http://localhost:11434",
-        )
+
+        self.base_url = base_url or settings.OLLAMA_BASE_URL
 
         self.llm = OllamaLLM(
             model=self.model,

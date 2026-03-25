@@ -1,15 +1,15 @@
 from typing import List
 from app.services.llm_service import LLMService
-from app.services.embedding_service import EmbeddingsService
+from app.services.search_service import SearchService
 from app.models.requests import QueryRequest
 from langchain_core.documents import Document
 
 
 class RAGService:
     def __init__(
-        self, llm_service: LLMService, embedding_service: EmbeddingsService, top_k: int = 5):
+        self, llm_service: LLMService, search_service: SearchService, top_k: int = 5):
         self.llm_service = llm_service
-        self.embedding_service = embedding_service
+        self.search_service = search_service
         self.top_k = top_k
 
     def build_augmented_prompt(self, user_query: str, context_docs: List[Document]) -> str:
@@ -35,15 +35,13 @@ class RAGService:
         return template.strip()
 
     def answer(self, query: str) -> str:
-        query_request = QueryRequest(query=query, top_k=self.top_k)
-        context = self.embedding_service.search(query_request)
-
+        context = self.search_service.search(query)
+        
         prompt = self.build_augmented_prompt(query, context)
         return self.llm_service.call(prompt)
 
     async def a_answer(self, query: str) -> str:
-        query_request = QueryRequest(query=query, top_k=self.top_k)
-        context = self.embedding_service.search(query_request)
+        context = await self.search_service.a_search(query)
 
         prompt = self.build_augmented_prompt(query, context)
         return await self.llm_service.a_call(prompt)

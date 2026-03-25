@@ -5,12 +5,14 @@ This service processes all program requirement files and stores them as embeddin
 
 import os
 import logging
+from pathlib import Path
 from typing import List, Dict, Any
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import chromadb
 from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
+from app.core.config import get_settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,17 +21,22 @@ logger = logging.getLogger(__name__)
 class DataIngestionService:
     def __init__(self):
         """Initialize the data ingestion service with ChromaDB and embeddings."""
+        settings = get_settings()
+        
         self.data_dir = "services/data"
-        self.chroma_persist_dir = os.getenv("CHROMA_PERSIST_DIRECTORY")
-        self.collection_name = os.getenv("CHROMA_COLLECTION_NAME")
+        
+        self.chroma_persist_dir: Path = settings.chroma_persist_path
+        self.collection_name = settings.CHROMA_COLLECTION_NAME
         
         # Initialize embeddings
         self.embeddings = OllamaEmbeddings(
-            model=os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+            model=settings.OLLAMA_EMBEDDING_MODEL
         )
         
         # Initialize ChromaDB client
-        self.client = chromadb.PersistentClient(path=self.chroma_persist_dir)
+        self.client = chromadb.PersistentClient(
+            path=str(self.chroma_persist_dir)
+        )
         self.vector_store = Chroma(
             client=self.client,
             collection_name=self.collection_name,

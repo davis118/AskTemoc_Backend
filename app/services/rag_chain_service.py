@@ -4,12 +4,17 @@ from langchain_core.output_parsers import StrOutputParser
 
 from app.services.prompt_service import rag_prompt_template
 from app.services.retriever_service import retriever_service
+from app.core.config import get_settings
 import os
 
 class RagChainService:
     def __init__(self):
+        settings = get_settings()
         self.retriever = retriever_service.get_retriever()
-        self.llm = OllamaLLM(model=os.getenv("OLLAMA_MODEL", "llama3.1:8b"), base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
+        self.llm = OllamaLLM(
+            model=settings.OLLAMA_MODEL,
+            base_url=settings.OLLAMA_BASE_URL,
+        )
 
     def get_chain(self):
         def format_docs(docs):
