@@ -7,12 +7,15 @@ from docling.chunking import HybridChunker
 from docling.datamodel.backend_options import HTMLBackendOptions  
 from app.models.requests import EmbedItem, EmbedBatch
 from docling.datamodel.document import ConversionResult
- 
+
 from .html_processing_pipeline import HTMLProcessingPipeline, ChunkResult
 
 from enum import Enum
-from urllib.parse import urlparse
 
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from urllib.parse import urlparse
 class SourceType(str, Enum):
     HTML_URL = "html_url"
     PDF_URL = "pdf_url"
@@ -120,12 +123,39 @@ class DocumentSplitter:
         items = [self._chunk_result_to_embed_item(chunk, i) for i, chunk in enumerate(chunks)]  
         return EmbedBatch(items=items)  
   
-    def process_html_from_url(self, url: str, timeout: int = 30) -> EmbedBatch:  
-        """Fetch and process HTML from URL."""  
-        import requests  
-        response = requests.get(url, timeout=timeout)  
-        response.raise_for_status()  
-        return self.process_html(response.text, url)  
+    def process_html_from_url(self, url: str, timeout: int = 30) -> EmbedBatch:
+        """Fetch and process HTML from URL with retries and better headers."""
+
+        session = requests.Session()
+
+        # Retry strategy for dropped connections, 5xx errors, etc.
+        retries = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[500, 502, 503, 504],
+            allowed_methods=["GET"],
+            raise_on_status=False,
+        )
+        session.mount("https://", HTTPAdapter(max_retries=retries))
+        session.mount("http://", HTTPAdapter(max_retries=retries))
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/122.0 Safari/537.36"
+            )
+        }
+
+        try:
+            response = session.get(url, timeout=timeout, headers=headers)
+            response.raise_for_status()
+        except requests.exceptions.RemoteDisconnected as e:
+            raise RuntimeError(f"Server closed connection unexpectedly: {e}") from e
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"Failed to fetch URL {url}: {e}") from e
+        print(response.text)
+        return self.process_html(response.text, url)
   
     def _create_embed_batch_from_docling(self, conv_result: ConversionResult, source_url: Optional[str] = None) -> EmbedBatch:  
         """Convert DoclingDocument to EmbedBatch using chunking."""  

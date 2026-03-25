@@ -118,53 +118,59 @@ class HTMLProcessingPipeline:
             logger.error(f"Pipeline failed for source '{source_name}': {str(e)}")  
             raise  
       
-    def _extract_and_validate_html(  
-        self,  
-        input_data: Union[str, Path, Dict[str, Any]],  
-        source_name: Optional[str]  
-    ) -> HTMLInput:  
-        """  
-        Extract HTML content and validate using Pydantic.  
-          
-        Returns:  
-            Validated HTMLInput object  
-        """  
-        # Case 1: Dictionary/JSON input  
-        if isinstance(input_data, dict):    
-            html_content = input_data.get('cleaned_html', '')  
-            if not html_content:  
-                html_content = input_data.get('html', '')  
-            if not html_content:      
-                html_content = input_data.get('content', '') or input_data.get('html_content', '')    
-            if not html_content:    
-                raise ValueError("JSON object missing 'cleaned_html', 'html' field or valid fallback")
-            
-            datetime_value = input_data.get('crawled_at')     
-                
-            source = source_name or "JSON object"    
-            logger.info(f"Extracted HTML from JSON object (length: {len(html_content)})")    
-                
-            return html_content, source, datetime_value
-          
-        # Case 2: File path  
-        if isinstance(input_data, (Path, str)):  
-            path = Path(input_data)  
-  
-            if path.exists() and path.is_file():  
-                html_content = path.read_text(encoding='utf-8')  
-                source = str(path)  
-                logger.info(f"Read HTML from file: {source}")  
-                
-                return html_content, source, datetime.now().isoformat()
-              
-            # Case 3: Raw HTML text (not a valid file path)  
-            html_content = str(input_data)  
-            source = source_name or "raw HTML text"  
-            logger.info(f"Processing raw HTML text (length: {len(html_content)})")  
-              
-            return html_content, source, datetime.now().isoformat() 
-          
-        raise ValueError(f"Unsupported input type: {type(input_data)}")  
+    def _extract_and_validate_html(
+        self,
+        input_data: Union[str, Path, Dict[str, Any]],
+        source_name: Optional[str]
+    ) -> HTMLInput:
+        """Extract HTML content and validate using Pydantic."""
+
+        # Case 1: Dictionary/JSON input
+        if isinstance(input_data, dict):
+            html_content = (
+                input_data.get('cleaned_html')
+                or input_data.get('html')
+                or input_data.get('content')
+                or input_data.get('html_content')
+            )
+
+            if not html_content:
+                raise ValueError("JSON object missing HTML content")
+
+            source = source_name or "JSON object"
+            logger.info(f"Extracted HTML from JSON object (length: {len(html_content)})")
+
+            return HTMLInput(
+                html_content=html_content,
+                source=source
+            )
+
+        # Case 2: File path
+        if isinstance(input_data, (Path, str)):
+            path = Path(input_data)
+
+            if path.exists() and path.is_file():
+                html_content = path.read_text(encoding='utf-8')
+                source = str(path)
+                logger.info(f"Read HTML from file: {source}")
+
+                return HTMLInput(
+                    html_content=html_content,
+                    source=source
+                )
+
+            # Case 3: Raw HTML text
+            html_content = str(input_data)
+            source = source_name or "raw HTML text"
+            logger.info(f"Processing raw HTML text (length: {len(html_content)})")
+
+            return HTMLInput(
+                html_content=html_content,
+                source=source
+            )
+
+        raise ValueError(f"Unsupported input type: {type(input_data)}")
+
       
     def _html_to_document(self, html_content: str, source: str) -> DoclingDocument:  
         """  

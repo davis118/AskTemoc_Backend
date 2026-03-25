@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.endpoints import ingest, query, rag_endpoint, health, search
+from app.api.endpoints import ingest, query, rag_endpoint, health, search, documents
 from app.db.database import init_db
 
 app = FastAPI(title="AskTemoc Backend")
@@ -8,7 +8,7 @@ app = FastAPI(title="AskTemoc Backend")
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Frontend URL
+    allow_origins=["*"],  # Frontend URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -28,3 +28,5 @@ app.include_router(search.router, prefix="/api/search", tags=['search'])
 app.include_router(rag_endpoint.router, prefix="/api", tags=['rag'])
 app.include_router(health.router, prefix="/api/health", tags=['health'])
 app.include_router(ingest.router, prefix="/api/embed", tags=['embed'])
+
+app.include_router(documents.router, prefix="/documents", tags=["documents"])
