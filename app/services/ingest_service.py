@@ -6,7 +6,7 @@ from app.db import SessionLocal
 from app.db.services import DocumentService, ChunkService, EmbeddingService
 from app.db.models import Document, Chunk, Embedding
 from app.services.document_splitter import DocumentSplitter, EmbedBatch
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -232,7 +232,7 @@ class IngestService:
         # optionally update document metadata
         if new_doc_metadata:
             document.doc_metadata = {**(document.doc_metadata or {}), **new_doc_metadata}
-            document.updated_at = datetime.utcnow()
+            document.updated_at = datetime.now(timezone.utc)
             db.add(document)
 
         # add new chunks
