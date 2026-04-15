@@ -3,7 +3,7 @@ Database service layer for CRUD operations on documents, chunks, and embeddings.
 """
 
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from app.db.models import Document, Chunk, Embedding
@@ -41,6 +41,19 @@ class DocumentService:
         ).first()
 
     @staticmethod
+    def get_document_by_source(db: Session, source: str) -> Optional[Document]:
+        return (
+            db.query(Document)
+            .filter(
+                and_(
+                    Document.source == source,
+                    Document.is_deleted == False
+                )
+            )
+            .first()
+        )
+    
+    @staticmethod
     def list_documents(
         db: Session, skip: int = 0, limit: int = 100, include_deleted: bool = False
     ) -> List[Document]:
@@ -70,7 +83,7 @@ class DocumentService:
         if metadata is not None:
             document.doc_metadata = {**(document.doc_metadata or {}), **metadata}
 
-        document.updated_at = datetime.utcnow()
+        document.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(document)
         return document
@@ -88,7 +101,7 @@ class DocumentService:
         else:
             # Soft delete
             document.is_deleted = True
-            document.updated_at = datetime.utcnow()
+            document.updated_at = datetime.now(timezone.utc)
 
         db.commit()
         return True
@@ -175,7 +188,7 @@ class ChunkService:
         if metadata is not None:
             chunk.chunk_metadata = {**(chunk.chunk_metadata or {}), **metadata}
 
-        chunk.updated_at = datetime.utcnow()
+        chunk.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(chunk)
         return chunk
@@ -191,7 +204,7 @@ class ChunkService:
             db.delete(chunk)
         else:
             chunk.is_deleted = True
-            chunk.updated_at = datetime.utcnow()
+            chunk.updated_at = datetime.now(timezone.utc)
 
         db.commit()
         return True
@@ -282,9 +295,9 @@ class EmbeddingService:
         if is_synced is not None:
             embedding.is_synced = is_synced
             if is_synced:
-                embedding.last_synced_at = datetime.utcnow()
+                embedding.last_synced_at = datetime.now(timezone.utc)
 
-        embedding.updated_at = datetime.utcnow()
+        embedding.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(embedding)
         return embedding
@@ -311,7 +324,7 @@ class EmbeddingService:
 
         embedding.is_synced = True
         embedding.chroma_id = chroma_id
-        embedding.last_synced_at = datetime.utcnow()
+        embedding.last_synced_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(embedding)
         return embedding

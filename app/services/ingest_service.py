@@ -1,216 +1,313 @@
-import hashlib
-from html.parser import HTMLParser
-from typing import Optional, List, Dict, Any
+from typing import Union, List, Optional, Dict, Any, Callable
+from pathlib import Path
+import logging
+from sqlalchemy.orm import Session
+from app.db import SessionLocal
+from app.db.services import DocumentService, ChunkService, EmbeddingService
+from app.db.models import Document, Chunk, Embedding
+from app.services.document_splitter import DocumentSplitter, EmbedBatch
+from datetime import datetime, timezone
+import uuid
 
-class _HTMLTextExtractor(HTMLParser):
-    """Simple HTML to text extractor using the standard library."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._chunks: list[str] = []
-
-    def handle_data(self, data: str) -> None:
-        if data:
-            self._chunks.append(data)
-
-    def get_text(self) -> str:
-        return " ".join(part.strip() for part in self._chunks if part.strip())
+logger = logging.getLogger(__name__)
 
 
-class IngestService():
-    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200):
-        """
-        Initialize the IngestService.
+class IngestService:
+    def __init__(self, splitter: DocumentSplitter, embedding_function: Callable[[str], List[float]], vector_store, db_session_factory=SessionLocal):
+        self.splitter = splitter
+        self.embedding_function = embedding_function
+        self.vector_store = vector_store
+        self.db_session_factory = db_session_factory
 
-        Args:
-            chunk_size: Maximum size of text chunks in characters (default: 1000).
-            chunk_overlap: Number of characters to overlap between chunks (default: 200).
-        """
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
+    def _sanitize_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        clean = {}
 
-    def _split_text(self, text: str) -> List[str]:
-        """
-        Split text into chunks with overlap.
+        for k, v in metadata.items():
 
-        Args:
-            text: Text to split.
+            if isinstance(v, (str, int, float, bool)) or v is None:
+                clean[k] = v
 
-        Returns:
-            List of text chunks.
-        """
-        if len(text) <= self.chunk_size:
-            return [text]
+            elif isinstance(v, list):
+                clean[k] = ", ".join(str(i) for i in v)
 
-        chunks: List[str] = []
-        start = 0
+            elif isinstance(v, dict):
+                clean[k] = str(v)
 
-        while start < len(text):
-            end = start + self.chunk_size
-            chunk = text[start:end]
-            
-            # Try to break at sentence boundary if not at the end
-            if end < len(text):
-                # Look for sentence endings near the end
-                for break_char in ['. ', '.\n', '! ', '!\n', '? ', '?\n']:
-                    last_break = chunk.rfind(break_char)
-                    if last_break > self.chunk_size // 2:  # Only break if reasonable
-                        chunk = chunk[:last_break + 1]
-                        end = start + len(chunk)
-                        break
-            
-            chunks.append(chunk.strip())
-            start = end - self.chunk_overlap
+            else:
+                clean[k] = str(v)
 
-        return chunks
+        return clean
 
-    def _create_chunks(self, text: str, source_url: str, base_chunk_id: str = "1") -> List[Dict[str, Any]]:
-        """
-        Create chunk dictionaries from text.
+    def ingest_file_old(self, source: Union[str, Path], source_url: Optional[str] = None, document_title: Optional[str] = None, document_metadata: Optional[Dict[str, Any]] = None) -> Document:
+        # split the source into chunks
+        batch: EmbedBatch = self.splitter.process_file(source, source_url)
+        if not batch.items:
+            logger.warning("No chunks generated from source: %s", source)
+            # We'll assume at least one chunk is required.
+            raise ValueError("No content extracted from source")
 
-        Args:
-            text: Text to chunk.
-            source_url: Source URL for the chunks.
-            base_chunk_id: Base ID for chunk numbering.
+        # determine document source string (for uniqueness check)
+        doc_source = source_url or str(source)
 
-        Returns:
-            List of chunk dictionaries with chunk_id, text, and source_url.
-        """
-        text_chunks = self._split_text(text)
-        chunks: List[Dict[str, Any]] = []
-
-        for i, chunk_text in enumerate(text_chunks):
-            if not chunk_text.strip():
-                continue
-            
-            chunk_id = f"{base_chunk_id}_{i+1}" if len(text_chunks) > 1 else base_chunk_id
-            chunks.append({
-                "chunk_id": chunk_id,
-                "text": chunk_text,
-                "source_url": source_url
-            })
-
-        return chunks
-
-    def process_HTML(self, html_content: str, source_url: Optional[str] = None) -> List[Dict[str, Any]]:
-        """
-        Convert basic HTML to plain text and return as JSON chunks.
-
-        Args:
-            html_content: The HTML string to process.
-            source_url: Optional source URL. If not provided, generates a hash-based URL.
-
-        Returns:
-            List of dictionaries with chunk_id, text, and source_url fields.
-        """
-        parser = _HTMLTextExtractor()
-        parser.feed(html_content)
-        text = parser.get_text()
-
-        if not source_url:
-            # Generate a hash-based identifier
-            content_hash = hashlib.md5(html_content.encode()).hexdigest()[:8]
-            source_url = f"html://content/{content_hash}"
-
-        return self._create_chunks(text, source_url, base_chunk_id="html")
-    
-    def process_html_from_url(self, url: str, timeout: int = 30) -> List[Dict[str, Any]]:
-        """
-        Fetch HTML content from a URL and return as JSON chunks.
-
-        Args:
-            url: The URL to fetch HTML content from.
-            timeout: Request timeout in seconds (default: 30).
-
-        Returns:
-            List of dictionaries with chunk_id, text, and source_url fields.
-
-        Raises:
-            requests.RequestException: If the request fails (connection error, timeout, etc.).
-            RuntimeError: If requests library is not installed.
-        """
+        # start a database session
+        db: Session = self.db_session_factory()
         try:
-            import requests  # type: ignore
-        except ImportError:
-            raise RuntimeError(
-                "requests is required for URL HTML ingestion. Add 'requests' to requirements and install."
+            # check if document already exists by source
+            existing_doc = DocumentService.get_document_by_source(db, doc_source)
+            if existing_doc:
+                logger.info("Document already exists, updating: %s", doc_source)
+                # update existing document: soft delete old chunks & embeddings, then add new ones
+                self._replace_document_chunks(db, existing_doc, batch, document_metadata)
+                doc = existing_doc
+            else:
+                logger.info("Creating new document: %s", doc_source)
+                # create new document
+                title = document_title or self._derive_title_from_source(source, source_url)
+                doc = DocumentService.create_document(
+                    db,
+                    title=title,
+                    source=doc_source,
+                    metadata=document_metadata or {},
+                )
+                # add new chunks
+                self._add_chunks_to_document(db, doc, batch)
+
+            db.commit()
+            db.refresh(doc)
+            return doc
+
+        except Exception as e:
+            db.rollback()
+            logger.error("Ingestion failed for %s: %s", doc_source, e, exc_info=True)
+            raise
+        finally:
+            db.close()
+
+    def _ingest_batch(self, batch: EmbedBatch, source: str, document_title: Optional[str], document_metadata: Optional[Dict[str, Any]] = None,) -> Document:
+
+        if not batch.items:
+            raise ValueError("No content extracted from source")
+
+        db: Session = self.db_session_factory()
+
+        try:
+
+            existing_doc = DocumentService.get_document_by_source(db, source)
+            print(f"Source: {source}")
+            print(f"Existing Doc: {existing_doc}")
+            if existing_doc:
+                logger.info("Document exists, replacing chunks: %s", source)
+
+                self._replace_document_chunks(
+                    db,
+                    existing_doc,
+                    batch,
+                    document_metadata
+                )
+
+                doc = existing_doc
+
+            else:
+                logger.info("Creating new document: %s", source)
+                print(f"Document Title: {document_title}")
+                title = document_title or self._derive_title_from_source(source, None)
+                print(f"Title: {title}")
+                doc = DocumentService.create_document(
+                    db,
+                    title=title,
+                    source=source,
+                    metadata=document_metadata or {},
+                )
+
+                self._add_chunks_to_document(db, doc, batch)
+
+            db.commit()
+            db.refresh(doc)
+
+            return doc
+
+        except Exception:
+            db.rollback()
+            raise
+
+        finally:
+            db.close()
+    
+    def ingest_file(self,source: Union[str, Path], source_url: Optional[str] = None, document_title: Optional[str] = None, document_metadata: Optional[Dict[str, Any]] = None,) -> Document:
+
+        batch: EmbedBatch = self.splitter.process_file(source, source_url)
+
+        doc_source = source_url or str(source)
+
+        return self._ingest_batch(
+            batch,
+            doc_source,
+            document_title,
+            document_metadata
+        )
+    
+    def ingest_html(self, html: str, source_url: Optional[str] = None, document_title: Optional[str] = None, document_metadata: Optional[Dict[str, Any]] = None,) -> Document:
+        batch = self.splitter.process_html(html, source_url)
+
+        source = source_url or "html_content"
+
+        return self._ingest_batch(
+            batch,
+            source,
+            document_title,
+            document_metadata
+        )
+    
+    def ingest_url( self, url: str, timeout: int = 30, document_metadata: Optional[Dict[str, Any]] = None,) -> Document:
+
+        batch = self.splitter.process_html_from_url(url, timeout)
+
+        return self._ingest_batch(
+            batch,
+            url,
+            None,
+            document_metadata
+        )
+    
+    def delete_file(self, document_id: str, hard_delete: bool = False) -> bool:
+        db: Session = self.db_session_factory()
+        try:
+            # fetch the document (including soft-deleted if hard_delete)
+            doc = db.query(Document).filter(Document.id == document_id).first()
+            if not doc:
+                logger.warning("Document not found for deletion: %s", document_id)
+                return False
+
+            # If hard deleting, we need to delete vectors from vector store first
+            if hard_delete:
+                # collect all embedding chroma_ids
+                chroma_ids = []
+                for chunk in doc.chunks:
+                    for emb in chunk.embeddings:
+                        if emb.chroma_id:
+                            chroma_ids.append(emb.chroma_id)
+                if chroma_ids:
+                    self.vector_store.delete(chroma_ids)
+                    logger.info("Deleted %d vectors from vector store", len(chroma_ids))
+
+            # use the service method to delete (soft or hard)
+            success = DocumentService.delete_document(db, document_id, hard_delete)
+            db.commit()
+            return success
+
+        except Exception as e:
+            db.rollback()
+            logger.error("Deletion failed for document %s: %s", document_id, e, exc_info=True)
+            raise
+        finally:
+            db.close()
+
+    def update_file(self, source: Union[str, Path], source_url: Optional[str] = None, document_title: Optional[str] = None, document_metadata: Optional[Dict[str, Any]] = None,) -> Document:
+        return self.ingest_file(source, source_url, document_title, document_metadata)
+
+    def read_files(self, skip: int = 0, limit: int = 100) -> List[Document]:
+        db: Session = self.db_session_factory()
+        try:
+            return DocumentService.list_documents(db, skip=skip, limit=limit)
+        finally:
+            db.close()
+
+    def _replace_document_chunks(self, db: Session, document: Document, batch: EmbedBatch, new_doc_metadata: Optional[Dict[str, Any]] = None) -> None:
+        # collect all chroma_ids from existing embeddings for vector store deletion
+        chroma_ids = []
+        for chunk in document.chunks:
+            for emb in chunk.embeddings:
+                if emb.chroma_id:
+                    chroma_ids.append(emb.chroma_id)
+
+        # delete vectors from vector store
+        if chroma_ids:
+            self.vector_store.delete(chroma_ids)
+            logger.info("Deleted %d old vectors from vector store for document %s", len(chroma_ids), document.id)
+
+        # soft delete all existing chunks (cascade will also soft delete embeddings via relationship)
+        for chunk in document.chunks:
+            ChunkService.delete_chunk(db, chunk.id, hard_delete=False)
+
+        # optionally update document metadata
+        if new_doc_metadata:
+            document.doc_metadata = {**(document.doc_metadata or {}), **new_doc_metadata}
+            document.updated_at = datetime.now(timezone.utc)
+            db.add(document)
+
+        # add new chunks
+        self._add_chunks_to_document(db, document, batch)
+
+    def _add_chunks_to_document(self, db: Session, document: Document, batch: EmbedBatch) -> None:
+
+        texts = []
+        metadatas = []
+        embedding_ids = []
+
+        for idx, item in enumerate(batch.items):
+
+            chunk = ChunkService.create_chunk(
+                db,
+                document_id=document.id,
+                chunk_index=idx,
+                text=item.text,
+                metadata=item.metadata,
             )
 
+            embedding = EmbeddingService.create_embedding(
+                db,
+                chunk_id=chunk.id,
+                vector=None,
+                model="nomic-embed-text",
+            )            
+
+            texts.append(item.text)
+
+            metadata = {
+                "chunk_id": chunk.id,
+                "document_id": document.id,
+                "source": document.source,
+                **item.metadata,
+            }
+
+            metadatas.append(self._sanitize_metadata(metadata))
+
+            embedding_ids.append(embedding.id)
+
+        db.flush()
+
         try:
-            response = requests.get(url, timeout=timeout)
-            response.raise_for_status()  # Raises an HTTPError for bad responses
-            html_content = response.text
-        except requests.RequestException as e:
-            raise requests.RequestException(
-                f"Failed to fetch HTML from URL '{url}': {str(e)}"
-            ) from e
+            
+            chroma_ids = [str(uuid.uuid4()) for _ in texts]
 
-        # Use the URL as the source_url
-        return self.process_HTML(html_content, source_url=url)
-    
-    def process_pdf(self, file_path: str, source_url: Optional[str] = None) -> List[Dict[str, Any]]:
-        """
-        Extract text from a PDF file and return as JSON chunks.
-
-        Args:
-            file_path: Path to the PDF file on disk.
-            source_url: Optional source URL. If not provided, uses file:// path.
-
-        Returns:
-            List of dictionaries with chunk_id, text, and source_url fields.
-
-        Raises:
-            RuntimeError: If PyPDF2 is not installed.
-        """
-        try:
-            import PyPDF2  # type: ignore
-        except Exception as exc:
-            raise RuntimeError(
-                "PyPDF2 is required for PDF ingestion. Add 'PyPDF2' to requirements and install."
+            self.vector_store.add_texts(
+                texts=texts,
+                metadatas=metadatas,
+                ids=chroma_ids,
             )
 
-        if not source_url:
-            source_url = f"file://{file_path}"
+        except Exception:
+            logger.error("Vector store insertion failed")
+            raise
 
-        text_chunks: list[str] = []
-        with open(file_path, "rb") as f:
-            reader = PyPDF2.PdfReader(f)
-            for page in reader.pages:
-                page_text: Optional[str] = page.extract_text()
-                if page_text:
-                    text_chunks.append(page_text)
-        
-        full_text = "\n".join(text_chunks)
-        return self._create_chunks(full_text, source_url, base_chunk_id="pdf")
+        for emb_id, chroma_id in zip(embedding_ids, chroma_ids):
+            EmbeddingService.mark_synced(db, emb_id, chroma_id)
 
-    def process_word(self, file_path: str, source_url: Optional[str] = None) -> List[Dict[str, Any]]:
-        """
-        Extract text from a DOCX file and return as JSON chunks.
-
-        Args:
-            file_path: Path to the .docx file on disk.
-            source_url: Optional source URL. If not provided, uses file:// path.
-
-        Returns:
-            List of dictionaries with chunk_id, text, and source_url fields.
-
-        Raises:
-            RuntimeError: If python-docx is not installed.
-        """
-        try:
-            import docx  # type: ignore
-        except Exception as exc:
-            raise RuntimeError(
-                "python-docx is required for DOCX ingestion. Add 'python-docx' to requirements and install."
-            ) from exc
-
-        if not source_url:
-            source_url = f"file://{file_path}"
-
-        document = docx.Document(file_path)
-        paragraphs = [p.text.strip() for p in document.paragraphs if p.text and p.text.strip()]
-        full_text = "\n".join(paragraphs)
-        
-        return self._create_chunks(full_text, source_url, base_chunk_id="docx")
-
-    
+    def _derive_title_from_source(self, source: Union[str, Path], source_url: Optional[str]) -> str:
+        if source_url:
+            # Use last part of URL path
+            from urllib.parse import urlparse
+            path = urlparse(source_url).path
+            if path and path != "/":
+                return Path(path).stem or source_url
+            return source_url
+        if isinstance(source, Path):
+            return source.stem
+        if isinstance(source, str):
+            # Try to treat as file path
+            p = Path(source)
+            if p.exists():
+                return p.stem
+            # Fallback to the first 50 chars
+            return source[:50]
+        return "Untitled"

@@ -1,287 +1,169 @@
-"""
-FastAPI endpoints for document management.
-"""
+import os
+import tempfile
+import uuid
+from pathlib import Path
+from typing import List, Optional, Dict, Any
 
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.db.database import get_db
+from app.db import SessionLocal
 from app.db.services import DocumentService, ChunkService, EmbeddingService
-from app.schemas.db_schemas import (
-    DocumentCreate,
-    DocumentUpdate,
-    DocumentResponse,
-    DocumentDetailResponse,
-    DocumentSearch,
-    ChunkCreate,
-    ChunkUpdate,
-    ChunkResponse,
-    ChunkDetailResponse,
-    EmbeddingCreate,
-    EmbeddingUpdate,
-    EmbeddingResponse,
-    BatchChunkCreate,
-    SearchResponse,
+from app.services.document_splitter import DocumentSplitter, EmbedBatch
+from app.services.retriever_service import retriever_service
+from app.services.ingest_service import IngestService
+from langchain_chroma import Chroma
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+splitter = DocumentSplitter(
+    chunk_size=1000,
+    chunk_overlap=200
 )
 
-router = APIRouter(prefix="/documents", tags=["documents"])
-
-
-# Document Endpoints
-@router.post("", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
-def create_document(
-    doc_data: DocumentCreate, db: Session = Depends(get_db)
-):
-    """Create a new document."""
-    document = DocumentService.create_document(
-        db=db,
-        title=doc_data.title,
-        source=doc_data.source,
-        metadata=doc_data.metadata,
+vector_store = Chroma(
+    client=retriever_service.client,
+    collection_name=retriever_service.collection_name,
+    embedding_function=retriever_service.embeddings,
+)
+def get_ingest_service():
+    ingest_service = IngestService(
+        splitter=splitter,
+        embedding_function=retriever_service.embeddings.embed_query,
+        vector_store=vector_store
     )
-    return document
+    return ingest_service
 
+router = APIRouter()
 
-@router.get("", response_model=List[DocumentResponse])
-def list_documents(
-    skip: int = 0,
-    limit: int = 100,
-    include_deleted: bool = False,
-    db: Session = Depends(get_db),
-):
-    """List all documents with pagination."""
-    documents = DocumentService.list_documents(
-        db=db, skip=skip, limit=limit, include_deleted=include_deleted
-    )
-    return documents
+@router.get("/")
+async def list_documents(skip: int = 0,limit: int = 100,include_deleted: bool = False, db: Session = Depends(get_db)):
+    """List all documents."""
+    docs = DocumentService.list_documents(db, skip, limit, include_deleted)
+    return {"documents": docs}
 
+@router.get("/{doc_id}")
+async def get_document(doc_id: str, db: Session = Depends(get_db)):
+    """Get detailed document information including its chunks."""
+    doc = DocumentService.get_document(db, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    chunks = ChunkService.list_chunks_by_document(db, doc_id)
+    return {"document": doc, "chunks": chunks}
 
-@router.get("/{doc_id}", response_model=DocumentDetailResponse)
-def get_document(doc_id: str, db: Session = Depends(get_db)):
-    """Retrieve a specific document with chunk count."""
-    document = DocumentService.get_document(db=db, doc_id=doc_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Document not found"
+@router.post("/upload/file")
+async def upload_file(file: UploadFile = File(...),title: Optional[str] = Form(None), metadata: Optional[str] = Form(None), ingest_service: IngestService = Depends(get_ingest_service)):
+    """Upload a file, split it, embed, and store in database & vector store."""
+    # Parse metadata if provided as JSON string
+    doc_metadata = {}
+    if metadata:
+        try:
+            import json
+            doc_metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid metadata JSON")
+
+    # Save uploaded file to a temporary location
+    suffix = Path(file.filename).suffix
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+
+    try:
+        # Use the ingest service
+        doc = ingest_service.ingest_file(
+            source=tmp_path,
+            source_url=file.filename,
+            document_title=title,
+            document_metadata=doc_metadata,
         )
+    except Exception as e:
+        # Clean up temp file
+        os.unlink(tmp_path)
+        raise HTTPException(status_code=500, detail=str(e))
 
-    chunk_count = len(document.chunks)
-    return {**document.__dict__, "chunk_count": chunk_count}
+    # Clean up
+    os.unlink(tmp_path)
+    return {"document": doc}
 
+@router.post("/upload/html")
+async def upload_html(html: str = Form(...), source_url: Optional[str] = Form(None), title: Optional[str] = Form(None), metadata: Optional[str] = Form(None), ingest_service: IngestService = Depends(get_ingest_service),):
+    """Ingest raw HTML content."""
+    doc_metadata = {}
+    if metadata:
+        try:
+            import json
+            doc_metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid metadata JSON")
 
-@router.put("/{doc_id}", response_model=DocumentResponse)
-def update_document(
-    doc_id: str, doc_data: DocumentUpdate, db: Session = Depends(get_db)
-):
-    """Update a document."""
-    document = DocumentService.update_document(
-        db=db,
-        doc_id=doc_id,
-        title=doc_data.title,
-        source=doc_data.source,
-        metadata=doc_data.metadata,
+    doc = ingest_service.ingest_html(
+        html=html,
+        source_url=source_url,
+        document_title=title,
+        document_metadata=doc_metadata,
     )
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Document not found"
-        )
-    return document
+    return {"document": doc}
 
+@router.post("/upload/url")
+async def upload_url(url: str = Form(...), metadata: Optional[str] = Form(None), ingest_service: IngestService = Depends(get_ingest_service)):
+    """Ingest a webpage from a URL."""
+    doc_metadata = {}
+    if metadata:
+        try:
+            import json
+            doc_metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid metadata JSON")
 
-@router.delete("/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_document(
-    doc_id: str, hard_delete: bool = False, db: Session = Depends(get_db)
-):
-    """Delete a document (soft or hard delete)."""
-    success = DocumentService.delete_document(db=db, doc_id=doc_id, hard_delete=hard_delete)
+    doc = ingest_service.ingest_url(url, document_metadata=doc_metadata)
+    return {"document": doc}
+
+@router.delete("/{doc_id}")
+async def delete_document(doc_id: str, hard_delete: bool = Query(False), ingest_service: IngestService = Depends(get_ingest_service)):
+    """Delete a document (soft by default, hard if hard_delete=true)."""
+    success = ingest_service.delete_file(doc_id, hard_delete=hard_delete)
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Document not found"
-        )
-    return None
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"message": "Document deleted"}
 
+@router.put("/{doc_id}")
+async def update_document(doc_id: str, title: Optional[str] = Form(None), metadata: Optional[str] = Form(None), db: Session = Depends(get_db),):
+    """Update document metadata (title, metadata)."""
+    doc_metadata = {}
+    if metadata:
+        try:
+            import json
+            doc_metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid metadata JSON")
 
-@router.post("/search", response_model=SearchResponse)
-def search_documents(
-    search_data: DocumentSearch, db: Session = Depends(get_db)
-):
-    """Search documents by title or source."""
-    results = DocumentService.search_documents(db=db, query_str=search_data.query)
-    return {"count": len(results), "results": [dict(d.__dict__) for d in results]}
+    doc = DocumentService.update_document(db, doc_id, title=title, metadata=doc_metadata)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"document": doc}
 
+@router.get("/{doc_id}/chunks")
+async def get_document_chunks(doc_id: str, db: Session = Depends(get_db)):
+    """List all chunks of a document."""
+    doc = DocumentService.get_document(db, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    chunks = ChunkService.list_chunks_by_document(db, doc_id)
+    return {"chunks": chunks}
 
-# Chunk Endpoints
-@router.post("/{doc_id}/chunks", response_model=ChunkResponse, status_code=status.HTTP_201_CREATED)
-def create_chunk(
-    doc_id: str, chunk_data: ChunkCreate, db: Session = Depends(get_db)
-):
-    """Create a chunk for a document."""
-    document = DocumentService.get_document(db=db, doc_id=doc_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Document not found"
-        )
-
-    chunk = ChunkService.create_chunk(
-        db=db,
-        document_id=doc_id,
-        chunk_index=chunk_data.chunk_index,
-        text=chunk_data.text,
-        metadata=chunk_data.metadata,
-    )
-    return chunk
-
-
-@router.post("/{doc_id}/chunks/batch", response_model=List[ChunkResponse], status_code=status.HTTP_201_CREATED)
-def batch_create_chunks(
-    doc_id: str, batch_data: BatchChunkCreate, db: Session = Depends(get_db)
-):
-    """Batch create chunks for a document."""
-    document = DocumentService.get_document(db=db, doc_id=doc_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Document not found"
-        )
-
-    chunks = []
-    for chunk_data in batch_data.chunks:
-        chunk = ChunkService.create_chunk(
-            db=db,
-            document_id=doc_id,
-            chunk_index=chunk_data.chunk_index,
-            text=chunk_data.text,
-            metadata=chunk_data.metadata,
-        )
-        chunks.append(chunk)
-
-    return chunks
-
-
-@router.get("/{doc_id}/chunks", response_model=List[ChunkResponse])
-def list_document_chunks(
-    doc_id: str,
-    skip: int = 0,
-    limit: int = 1000,
-    db: Session = Depends(get_db),
-):
-    """List all chunks for a document."""
-    document = DocumentService.get_document(db=db, doc_id=doc_id)
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Document not found"
-        )
-
-    chunks = ChunkService.list_chunks_by_document(
-        db=db, document_id=doc_id, skip=skip, limit=limit
-    )
-    return chunks
-
-
-@router.get("/chunks/{chunk_id}", response_model=ChunkDetailResponse)
-def get_chunk(chunk_id: str, db: Session = Depends(get_db)):
-    """Retrieve a specific chunk."""
-    chunk = ChunkService.get_chunk(db=db, chunk_id=chunk_id)
-    if not chunk:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Chunk not found"
-        )
-
-    embedding_count = len(chunk.embeddings)
-    has_embedding = embedding_count > 0
-
-    return {**chunk.__dict__, "embedding_count": embedding_count, "has_embedding": has_embedding}
-
-
-@router.put("/chunks/{chunk_id}", response_model=ChunkResponse)
-def update_chunk(
-    chunk_id: str, chunk_data: ChunkUpdate, db: Session = Depends(get_db)
-):
-    """Update a chunk."""
-    chunk = ChunkService.update_chunk(
-        db=db,
-        chunk_id=chunk_id,
-        text=chunk_data.text,
-        metadata=chunk_data.metadata,
-    )
-    if not chunk:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Chunk not found"
-        )
-    return chunk
-
-
-@router.delete("/chunks/{chunk_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_chunk(
-    chunk_id: str, hard_delete: bool = False, db: Session = Depends(get_db)
-):
-    """Delete a chunk."""
-    success = ChunkService.delete_chunk(db=db, chunk_id=chunk_id, hard_delete=hard_delete)
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Chunk not found"
-        )
-    return None
-
-
-# Embedding Endpoints
-@router.post("/chunks/{chunk_id}/embeddings", response_model=EmbeddingResponse, status_code=status.HTTP_201_CREATED)
-def create_embedding(
-    chunk_id: str, embedding_data: EmbeddingCreate, db: Session = Depends(get_db)
-):
-    """Create an embedding for a chunk."""
-    chunk = ChunkService.get_chunk(db=db, chunk_id=chunk_id)
-    if not chunk:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Chunk not found"
-        )
-
-    embedding = EmbeddingService.create_embedding(
-        db=db,
-        chunk_id=chunk_id,
-        vector=embedding_data.vector,
-        model=embedding_data.model,
-    )
-    return embedding
-
-
-@router.get("/embeddings/{embedding_id}", response_model=EmbeddingResponse)
-def get_embedding(embedding_id: str, db: Session = Depends(get_db)):
-    """Retrieve a specific embedding."""
-    embedding = EmbeddingService.get_embedding(db=db, embedding_id=embedding_id)
-    if not embedding:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Embedding not found"
-        )
-    return embedding
-
-
-@router.put("/embeddings/{embedding_id}", response_model=EmbeddingResponse)
-def update_embedding(
-    embedding_id: str,
-    embedding_data: EmbeddingUpdate,
-    db: Session = Depends(get_db),
-):
-    """Update an embedding."""
-    embedding = EmbeddingService.update_embedding(
-        db=db,
-        embedding_id=embedding_id,
-        vector=embedding_data.vector,
-        chroma_id=embedding_data.chroma_id,
-    )
-    if not embedding:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Embedding not found"
-        )
-    return embedding
-
-
-@router.delete("/embeddings/{embedding_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_embedding(embedding_id: str, db: Session = Depends(get_db)):
-    """Delete an embedding."""
-    success = EmbeddingService.delete_embedding(db=db, embedding_id=embedding_id)
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Embedding not found"
-        )
-    return None
+@router.get("/{doc_id}/embeddings")
+async def get_document_embeddings(doc_id: str, db: Session = Depends(get_db)):
+    """List all embeddings of a document (vectors not stored in DB)."""
+    doc = DocumentService.get_document(db, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    embeddings = EmbeddingService.get_embeddings_by_document(db, doc_id)
+    return {"embeddings": embeddings}

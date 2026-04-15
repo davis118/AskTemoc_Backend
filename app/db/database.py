@@ -1,30 +1,32 @@
-"""
-Database session management and initialization.
-"""
+from typing import Generator
 
-import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
+
+from app.core.config import get_settings
 from app.db.models import Base
 
-# Database URL configuration
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./asktemoc.db")
+import logging
 
-# Create engine
+logger = logging.getLogger(__name__)
+
+settings = get_settings()
+
 engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {},
-    echo=os.getenv("DB_ECHO", "false").lower() == "true",
+    settings.DATABASE_URL,
+    connect_args={"check_same_thread": False}
+    if settings.DATABASE_URL.startswith("sqlite")
+    else {},
+    echo=settings.DB_ECHO,
 )
 
-# Create session factory
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = sessionmaker(
+    bind=engine,
+    autocommit=False,
+    autoflush=False,
+)
 
-
-def get_db() -> Session:
-    """
-    Dependency injection for FastAPI to get a database session.
-    """
+def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
         yield db
@@ -32,17 +34,9 @@ def get_db() -> Session:
         db.close()
 
 
-def init_db():
-    """
-    Initialize database by creating all tables.
-    """
+def init_db() -> None:
     Base.metadata.create_all(bind=engine)
-    print("Database tables created successfully.")
 
 
-def drop_db():
-    """
-    Drop all tables (use with caution).
-    """
+def drop_db() -> None:
     Base.metadata.drop_all(bind=engine)
-    print("All database tables dropped.")
