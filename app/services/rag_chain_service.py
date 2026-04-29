@@ -15,7 +15,10 @@ from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough
 
-from app.services.prompt_service import rag_prompt_template
+from app.services.prompt_service import (
+    format_numbered_retrieval_context,
+    rag_prompt_template,
+)
 from app.services.retriever_service import retriever_service
 from app.core.config import get_settings
 
@@ -61,7 +64,11 @@ class RagChainService:
         retriever = retriever_service.get_retriever(k=k)
 
         def format_docs(docs):
-            return "\n\n".join(doc.page_content for doc in docs)
+            tuples = [
+                (d.page_content, (d.metadata or {}).get("source"), (d.metadata or {}).get("title"))
+                for d in docs
+            ]
+            return format_numbered_retrieval_context(tuples)
 
         rag_chain_from_docs = (
             RunnablePassthrough.assign(context=(lambda x: format_docs(x["context"])))
@@ -115,7 +122,8 @@ class RagChainService:
                     "title": h.get("title"),
                 }
 
-            ctx = "\n\n".join((h["text"] or "") for h in hits)
+            tuples = [(h["text"] or "", h.get("source"), h.get("title")) for h in hits]
+            ctx = format_numbered_retrieval_context(tuples)
             prompt_body = rag_prompt_template.format(context=ctx, question=message)
 
             messages = [HumanMessage(content=prompt_body)]

@@ -4,9 +4,14 @@ POST /api/chat — streaming RAG over Neon Postgres (pgvector).
 1) Embed query + pgvector retrieval (sync, off thread).
 2) Stream LLM tokens via model `.astream()` (true token streaming, not replay).
 
-SSE `data:` lines are JSON. Text events include:
-  - `delta`: new characters from the model this tick
-  - `message`: full answer so far (for clients that only tracked cumulative text)
+SSE `data:` lines are JSON.
+
+- **source** (before tokens): numbered rows with catalog **URL**, optional **title**; indices match prompt `Source n`.
+- **text**: **delta** (token chunk), **message** (cumulative assistant text including `[n, "verbatim"]` citations).
+- **done**: final **message** plus **citations**: parsed citation markers enriched with **url**/ **title**
+  per `source_index` (hydrated from streamed **source** events).
+
+Citation protocol is defined on `prompt_service.rag_prompt_template` (marker shape `[n, "EXACT_TEXT"]`).
 """
 
 import json
@@ -16,6 +21,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app.services.prompt_service import extract_inline_citations
 from app.services.rag_chain_service import rag_chain_service
 
 logger = logging.getLogger(__name__)
@@ -35,12 +41,14 @@ class ChatRequest(BaseModel):
 
 async def stream_rag_response(message: str):
     accumulated = ""
+    sources_by_idx: dict[int, dict] = {}
     try:
         async for ev in rag_chain_service.astream_rag(message):
             et = ev.get("type")
             if et == "source":
                 idx = ev.get("index", 0)
                 src = ev.get("source") or "Unknown"
+                sources_by_idx[idx] = {"source": src, "title": ev.get("title")}
                 line = f"Source {idx}: {src}"
                 yield (
                     "data: "
@@ -70,7 +78,30 @@ async def stream_rag_response(message: str):
                     + "\n\n"
                 )
             elif et == "done":
-                yield "data: " + json.dumps({"type": "done", "message": accumulated}) + "\n\n"
+                raw_cites = extract_inline_citations(accumulated)
+                citations = []
+                for c in raw_cites:
+                    i = c["source_index"]
+                    meta = sources_by_idx.get(i, {})
+                    citations.append(
+                        {
+                            "source_index": i,
+                            "quote": c["quote"],
+                            "url": meta.get("source"),
+                            "title": meta.get("title"),
+                        }
+                    )
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "type": "done",
+                            "message": accumulated,
+                            "citations": citations,
+                        }
+                    )
+                    + "\n\n"
+                )
             elif et == "error":
                 yield (
                     "data: "
