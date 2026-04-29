@@ -18,11 +18,16 @@ from playwright.async_api import (
     TimeoutError as PlaywrightTimeoutError,
 )
 
+from . import scraper_state
+from .publisher import publish_page
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+SCRAPER_NAME = "housing"
 
 
 class UTDHousingScraper:
@@ -48,9 +53,9 @@ class UTDHousingScraper:
         self._last_request_time = 0
         self.visited_urls: set[str] = set()
         self.results: list[dict] = []
+        self._state_lock = asyncio.Lock()
 
     async def _rate_limit_wait(self):
-        """Apply rate limiting between requests."""
         current_time = asyncio.get_event_loop().time()
         time_since_last = current_time - self._last_request_time
         if time_since_last < self.rate_limit:
@@ -59,46 +64,33 @@ class UTDHousingScraper:
 
     @staticmethod
     def _sanitize_filename(name: str) -> str:
-        """Convert a name to a safe filename."""
         name = re.sub(r"[^\w\s-]", "", name)
         name = re.sub(r"[-\s]+", "_", name)
         return name.strip("_").lower() or "index"
 
     def _normalize_url(self, url: str) -> str:
-        """Normalize a URL by removing fragments and trailing slashes."""
         parsed = urlparse(url)
-        # Rebuild without fragment
         normalized = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
         if parsed.query:
             normalized += f"?{parsed.query}"
         return normalized.rstrip("/")
 
     def _is_valid_link(self, url: str) -> bool:
-        """Check if a URL is a valid internal housing page link."""
         parsed = urlparse(url)
-
-        # Must be on the housing domain
         if parsed.netloc and parsed.netloc != self.DOMAIN:
             return False
-
-        # Skip non-HTML resources
         skip_extensions = {
             ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".svg",
             ".mp4", ".mp3", ".zip", ".exe", ".doc", ".docx",
             ".xls", ".xlsx", ".ppt", ".pptx",
         }
-        path_lower = parsed.path.lower()
-        if any(path_lower.endswith(ext) for ext in skip_extensions):
+        if any(parsed.path.lower().endswith(ext) for ext in skip_extensions):
             return False
-
-        # Skip mailto and tel links
         if url.startswith(("mailto:", "tel:", "javascript:")):
             return False
-
         return True
 
     async def _extract_links(self, page: Page, current_url: str) -> list[str]:
-        """Extract all valid internal links from a page."""
         links = []
         try:
             anchors = await page.query_selector_all("a[href]")
@@ -115,23 +107,16 @@ class UTDHousingScraper:
         return list(set(links))
 
     async def _scrape_page(self, page: Page, url: str) -> Optional[dict]:
-        """Scrape content from a single page."""
         try:
             await page.goto(url, wait_until="networkidle", timeout=30000)
             await self._rate_limit_wait()
 
-            # Get the page title
             title = await page.title()
-
-            # Extract main content, excluding nav/header/footer
             content = await page.evaluate("""
                 () => {
-                    // Remove noisy elements
-                    const remove = document.querySelectorAll(
+                    document.querySelectorAll(
                         'script, style, nav, header, footer, .menu, #menu, .nav, .navbar'
-                    );
-                    remove.forEach(el => el.remove());
-
+                    ).forEach(el => el.remove());
                     const main = document.querySelector(
                         'main, .main-content, #content, .content, .entry-content, article, .page-content'
                     );
@@ -152,15 +137,15 @@ class UTDHousingScraper:
             logger.error(f"Error scraping {url}: {e}")
             return None
 
-    async def _scrape_and_extract(self, browser: Browser, url: str) -> tuple[Optional[dict], list[str]]:
-        """Scrape a single page and extract its links. Returns (page_data, child_links)."""
+    async def _scrape_and_extract(
+        self, browser: Browser, url: str
+    ) -> tuple[Optional[dict], list[str]]:
         context = await browser.new_context()
         page = await context.new_page()
-        child_links = []
+        child_links: list[str] = []
         data = None
         try:
             data = await self._scrape_page(page, url)
-            # Re-navigate to get links (scrape_page modifies the DOM)
             await page.goto(url, wait_until="networkidle", timeout=30000)
             child_links = await self._extract_links(page, url)
         except Exception as e:
@@ -169,9 +154,7 @@ class UTDHousingScraper:
             await context.close()
         return data, child_links
 
-    async def _bfs_crawl(self, browser: Browser):
-        """BFS crawl that processes pages level-by-level to avoid deadlocks."""
-        # Queue holds (url, depth) tuples
+    async def _bfs_crawl(self, browser: Browser, state: dict):
         queue: list[tuple[str, int]] = [(self.BASE_URL, 0)]
         self.visited_urls.add(self._normalize_url(self.BASE_URL))
 
@@ -179,20 +162,18 @@ class UTDHousingScraper:
             if self.max_pages and len(self.results) >= self.max_pages:
                 break
 
-            # Process current batch concurrently (up to max_parallel at a time)
             batch = queue[:]
             queue.clear()
 
-            # Process batch in chunks of max_parallel
             for i in range(0, len(batch), self.max_parallel):
                 if self.max_pages and len(self.results) >= self.max_pages:
                     break
 
-                chunk = batch[i : i + self.max_parallel]
+                chunk = batch[i: i + self.max_parallel]
                 tasks = [self._scrape_and_extract(browser, url) for url, _ in chunk]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+                raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                for (url, depth), result in zip(chunk, results):
+                for (url, depth), result in zip(chunk, raw_results):
                     if isinstance(result, Exception):
                         logger.error(f"Error crawling {url}: {result}")
                         continue
@@ -206,7 +187,18 @@ class UTDHousingScraper:
                             f"({len(data['content'])} chars)"
                         )
 
-                    # Queue child links if within depth limit
+                        content = data["content"]
+                        if content and scraper_state.has_changed(url, content, state):
+                            await publish_page(
+                                url=url,
+                                page_title=data["title"],
+                                text_content=content,
+                            )
+                            async with self._state_lock:
+                                scraper_state.record_scraped(
+                                    url, content, SCRAPER_NAME, state
+                                )
+
                     if depth < self.max_depth:
                         for link in child_links:
                             normalized = self._normalize_url(link)
@@ -217,32 +209,26 @@ class UTDHousingScraper:
                                 queue.append((link, depth + 1))
                         logger.info(f"  Queued {len(child_links)} links from depth {depth}")
 
-                # Rate limit between chunks
                 await self._rate_limit_wait()
 
     def _save_results(self):
-        """Save all scraped results to disk."""
         housing_dir = self.output_dir / "housing"
         housing_dir.mkdir(parents=True, exist_ok=True)
 
         for data in self.results:
-            # Build a filename from the URL path
             parsed = urlparse(data["url"])
             path_part = parsed.path.strip("/")
-            if not path_part:
-                filename = "index"
-            else:
-                filename = self._sanitize_filename(path_part.replace("/", "_"))
-
-            # Save content as text file
-            txt_file = housing_dir / f"{filename}.txt"
+            filename = (
+                "index"
+                if not path_part
+                else self._sanitize_filename(path_part.replace("/", "_"))
+            )
             header = f"URL: {data['url']}\nTitle: {data['title']}\nDepth: {data['depth']}\n"
-            txt_file.write_text(
+            (housing_dir / f"{filename}.txt").write_text(
                 f"{header}\n{'-' * 60}\n\n{data['content']}",
                 encoding="utf-8",
             )
 
-        # Save an index JSON with metadata
         index = {
             "source": self.BASE_URL,
             "total_pages": len(self.results),
@@ -251,22 +237,29 @@ class UTDHousingScraper:
                 for r in self.results
             ],
         }
-        index_file = housing_dir / "index.json"
-        with open(index_file, "w") as f:
+        with open(housing_dir / "index.json", "w") as f:
             json.dump(index, f, indent=2)
 
         logger.info(f"Saved {len(self.results)} pages to {housing_dir}")
 
-    async def scrape(self):
-        """Main entry point — launches browser and starts crawling."""
+    async def scrape(self, state: Optional[dict] = None) -> list[dict]:
+        """Main entry point. Loads/saves state automatically if not provided."""
+        owns_state = state is None
+        if owns_state:
+            state = scraper_state.load()
+
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             try:
-                await self._bfs_crawl(browser)
+                await self._bfs_crawl(browser, state)
             finally:
                 await browser.close()
 
         self._save_results()
+
+        if owns_state:
+            scraper_state.save(state)
+
         return self.results
 
 
@@ -276,7 +269,7 @@ async def main():
         max_pages=50,
         rate_limit=1.5,
         max_parallel=3,
-        output_dir=Path(__file__).parent / "data",
+        output_dir=Path(__file__).parent.parent / "data",
     )
     results = await scraper.scrape()
     print(f"\nDone! Scraped {len(results)} pages.")
