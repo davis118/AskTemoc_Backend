@@ -1,17 +1,40 @@
-from langchain_ollama import ChatOllama
-import random
+"""
+LLM service — uses OpenAI if OPENAI_API_KEY is set, otherwise Ollama.
+"""
+
+from app.core.config import get_settings
+
+
 class LLMService:
     def __init__(self):
-        self.llm = ChatOllama(model="llama3.1:8b", temperature=0.4)
+        self.settings = get_settings()
+        if self.settings.use_openai:
+            from openai import OpenAI
+            self._client = OpenAI(api_key=self.settings.OPENAI_API_KEY)
+            self._model = self.settings.OPENAI_MODEL
+        else:
+            from langchain_ollama import ChatOllama
+            self._ollama = ChatOllama(
+                model=self.settings.OLLAMA_MODEL,
+                temperature=self.settings.OLLAMA_TEMPERATURE,
+            )
 
-    def call(self):
-        # note that this is just a place holder, this class is only for calling the LLM 
-        countries = ["Indonesia", "Germany", "China", "France", "Japan", "Brazil"]
-        content = self.llm.invoke(f"What is the capital of {random.choices(countries)}?").content
-        return content
+    def call(self, query: str) -> str:
+        if self.settings.use_openai:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "user", "content": query}],
+            )
+            return response.choices[0].message.content
+        return self._ollama.invoke(query).content
 
-    async def a_call(self):
-        # Just know that this is an async call to the LLM hence the 'a_' prefix
-        countries = ["Indonesia", "Germany", "China", "France", "Japan", "Brazil"]
-        content = await self.llm.ainvoke(f"What is the capital of {random.choices(countries)}?")
-        return content.content
+    async def a_call(self, query: str) -> str:
+        if self.settings.use_openai:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=self.settings.OPENAI_API_KEY)
+            response = await client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "user", "content": query}],
+            )
+            return response.choices[0].message.content
+        return (await self._ollama.ainvoke(query)).content
