@@ -51,6 +51,7 @@ class RetrieverService:
                 .join(Document, Document.id == Chunk.document_id)
                 .filter(Chunk.is_deleted == False)
                 .filter(Document.is_deleted == False)
+                .filter(Embedding.vector.isnot(None))
                 .order_by(Embedding.vector.cosine_distance(query_vector))
                 .limit(k)
                 .all()
