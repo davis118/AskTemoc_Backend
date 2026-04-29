@@ -1,6 +1,8 @@
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,6 +12,9 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     DB_ECHO: bool = False
     DEBUG: bool = False
+
+    # Chat/completions: "openai" (default), or "ollama" for local Llama/etc.
+    LLM_PROVIDER: Literal["openai", "ollama"] = "openai"
 
     # OpenAI
     OPENAI_API_KEY: Optional[str] = None
@@ -28,13 +33,22 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    @property
+    @field_validator("LLM_PROVIDER", mode="before")
+    @classmethod
+    def _normalize_llm_provider(cls, v: object) -> str:
+        if v is None or (isinstance(v, str) and not str(v).strip()):
+            return "openai"
+        s = str(v).strip().lower()
+        return s if s in ("openai", "ollama") else "openai"
     def chroma_persist_path(self) -> Path:
         project_root = Path(__file__).resolve().parent.parent
         return (project_root / self.CHROMA_PERSIST_DIRECTORY).resolve()
 
     @property
     def use_openai(self) -> bool:
+        """Use OpenAI chat when provider is OpenAI *and* an API key is set; else Ollama."""
+        if self.LLM_PROVIDER == "ollama":
+            return False
         return bool(self.OPENAI_API_KEY)
 
 

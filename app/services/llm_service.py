@@ -1,5 +1,5 @@
 """
-LLM service — uses OpenAI if OPENAI_API_KEY is set, otherwise Ollama.
+LLM service — OpenAI when LLM_PROVIDER=openai (default) and OPENAI_API_KEY is set; else Ollama unless LLM_PROVIDER=ollama.
 """
 
 from app.core.config import get_settings
