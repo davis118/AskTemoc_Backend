@@ -20,9 +20,11 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Chunk sizes tuned for text-embedding-3-large (8191 token limit)
-CHUNK_SIZE = 1000   # characters
-CHUNK_OVERLAP = 150
+# text-embedding-3-large token limit is 8191 — use ~2000 tokens per chunk
+# for good retrieval granularity while preserving meaningful context.
+CHUNK_TOKENS = 2000
+CHUNK_OVERLAP_TOKENS = 100
+TIKTOKEN_MODEL = "text-embedding-3-large"
 
 
 # --------------------------------------------------------------------------- #
@@ -42,30 +44,29 @@ class IngestPayload(BaseModel):
 # Helpers
 # --------------------------------------------------------------------------- #
 
-def _split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
-    """Simple character-based splitter with overlap, breaking at sentence ends."""
-    if len(text) <= chunk_size:
-        return [text.strip()] if text.strip() else []
+def _split_text(text: str) -> list[str]:
+    """
+    Token-aware recursive splitter using tiktoken.
+    Splits on paragraph → sentence → word boundaries before resorting to chars.
+    Targets CHUNK_TOKENS tokens per chunk with CHUNK_OVERLAP_TOKENS overlap.
+    """
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    import tiktoken
 
-    chunks: list[str] = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        segment = text[start:end]
+    enc = tiktoken.encoding_for_model("text-embedding-ada-002")  # same tokeniser family
 
-        if end < len(text):
-            for sep in [". ", ".\n", "! ", "!\n", "? ", "?\n", "\n\n"]:
-                boundary = segment.rfind(sep)
-                if boundary > chunk_size // 2:
-                    segment = segment[: boundary + 1]
-                    end = start + len(segment)
-                    break
+    def token_len(t: str) -> int:
+        return len(enc.encode(t))
 
-        if segment.strip():
-            chunks.append(segment.strip())
-        start = end - overlap
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_TOKENS,
+        chunk_overlap=CHUNK_OVERLAP_TOKENS,
+        length_function=token_len,
+        separators=["\n\n", "\n", ". ", "! ", "? ", "; ", ", ", " ", ""],
+    )
 
-    return chunks
+    chunks = splitter.split_text(text)
+    return [c.strip() for c in chunks if c.strip()]
 
 
 def _embed_texts(texts: list[str], settings) -> list[list[float]]:
