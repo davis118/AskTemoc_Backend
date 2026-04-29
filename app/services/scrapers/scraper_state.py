@@ -41,8 +41,10 @@ def content_hash(content: str) -> str:
 
 
 def has_changed(url: str, content: str, state: dict) -> bool:
-    """Return True if content differs from the stored hash (or URL is new)."""
+    """Return True if content differs from the stored hash (or URL is new / never scraped)."""
     stored = state["pages"].get(url, {})
+    if not stored.get("last_scraped"):
+        return True
     return stored.get("hash") != content_hash(content)
 
 
@@ -57,10 +59,20 @@ def record_scraped(
     Update the hash for a URL and schedule its next scrape.
 
     Mutates *state* in place — caller is responsible for eventually calling save().
+
+    If this URL previously had no *last_scraped* timestamp (never completed a scrape cycle
+    in state, or manually cleared), the next queued rescrape runs immediately rather than waiting
+    the default interval.
     """
     now = datetime.now(timezone.utc)
+    prior = state["pages"].get(url, {})
+
     jitter = random.uniform(-JITTER_HOURS, JITTER_HOURS)
-    next_scrape = now + timedelta(days=interval_days, hours=jitter)
+    if prior.get("last_scraped"):
+        next_scrape = now + timedelta(days=interval_days, hours=jitter)
+    else:
+        # First successful recording (or missing last_scraped) — schedule follow-up scrape ASAP
+        next_scrape = now
 
     state["pages"][url] = {
         "hash": content_hash(content),
@@ -81,11 +93,39 @@ def record_scraped(
 
 
 def get_due_urls(scraper: str, state: dict) -> list[str]:
-    """Return queue entries for *scraper* whose scheduled time has passed."""
+    """
+    Return URLs that should be re-scrape for *scraper*.
+
+    Includes queue rows with scheduled_for <= now, plus any page belonging to this
+    scraper that has no last_scraped (repair incomplete state).
+
+    Deduped; queue iteration order preserved, then orphaned page entries.
+    """
     now = datetime.now(timezone.utc)
-    return [
-        entry["url"]
-        for entry in state["queue"]
-        if entry["scraper"] == scraper
-        and datetime.fromisoformat(entry["scheduled_for"]) <= now
-    ]
+    seen: set[str] = set()
+    urls: list[str] = []
+
+    for entry in state["queue"]:
+        if entry["scraper"] != scraper:
+            continue
+        url = entry["url"]
+        if url in seen:
+            continue
+        pf = datetime.fromisoformat(entry["scheduled_for"])
+        pg = state["pages"].get(url) or {}
+        in_pages = url in state["pages"]
+        missing_last = in_pages and not pg.get("last_scraped")
+
+        if pf <= now or missing_last:
+            urls.append(url)
+            seen.add(url)
+
+    # Pages never queued but marked for this scraper with missing last_scraped (corrupt slice)
+    for url, meta in state["pages"].items():
+        if meta.get("scraper") != scraper or url in seen:
+            continue
+        if not meta.get("last_scraped"):
+            urls.append(url)
+            seen.add(url)
+
+    return urls
