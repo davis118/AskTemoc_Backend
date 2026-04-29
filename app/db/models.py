@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import Column, String, Integer, Float, DateTime, ForeignKey, Text, JSON, Boolean, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
+from pgvector.sqlalchemy import Vector
 
 Base = declarative_base()
 
@@ -67,10 +68,10 @@ class Embedding(Base):
 
     id = Column(String, primary_key=True, index=True)  # UUID or chroma_id
     chunk_id = Column(String, ForeignKey("chunks.id"), nullable=False, index=True)
-    vector = Column(JSON, nullable=True)  # Store as JSON array for flexibility
-    model = Column(String(100), nullable=True)  # Model used (e.g., "text-embedding-ada-002")
-    chroma_id = Column(String(255), nullable=True, index=True)  # Reference to ChromaDB ID
-    is_synced = Column(Boolean, default=False, index=True)  # Track sync status
+    vector = Column(Vector(3072), nullable=True)  # pgvector: text-embedding-3-large dimension
+    model = Column(String(100), nullable=True)  # Model used (e.g., "text-embedding-3-large")
+    chroma_id = Column(String(255), nullable=True, index=True)  # Reference to ChromaDB ID (legacy)
+    is_synced = Column(Boolean, default=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_synced_at = Column(DateTime, nullable=True)
