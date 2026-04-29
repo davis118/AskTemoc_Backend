@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import json
 import asyncio
+import os
 
 from app.services.rag_chain_service import rag_chain_service
 
@@ -17,7 +18,28 @@ async def stream_rag_response(chain, message: str):
         result = chain.invoke(message)
         print(f"RAG result obtained: {len(result.get('context', []))} sources, answer length: {len(result.get('answer', ''))}")
         
-        # Send sources immediately
+        # Get catalog base URL from environment
+        base_url = os.getenv("CATALOG_BASE_URL", "https://catalog.utdallas.edu/2025/undergraduate/programs/")
+        
+        # Send citation events first (new format)
+        if "context" in result:
+            for index, doc in enumerate(result["context"]):
+                # Construct full HTTPS URL from source metadata
+                source = doc.metadata.get("source", "")
+                program_slug = source.replace("_", "-") if source else ""
+                full_url = f"{base_url}{program_slug}" if program_slug else ""
+                
+                citation_event = {
+                    "type": "citation",
+                    "index": index,
+                    "url": full_url,
+                    "chunk_text": doc.page_content,
+                    "document_title": doc.metadata.get("title", doc.metadata.get("source", "Unknown Document"))
+                }
+                yield f"data: {json.dumps(citation_event)}\n\n"
+                await asyncio.sleep(0.05)
+        
+        # Keep original source events for backwards compatibility
         if "context" in result:
             for i, doc in enumerate(result["context"]):
                 source_message = f"Source {i+1}: {doc.metadata.get('source', 'Unknown')}"

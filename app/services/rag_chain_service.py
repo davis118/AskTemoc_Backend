@@ -15,13 +15,19 @@ class RagChainService:
         def format_docs(docs):
             return "\n\n".join(doc.page_content for doc in docs)
 
+        # We keep raw documents unmodified and preserve all metadata
+        # Format only a copy for the LLM prompt while keeping originals intact
         rag_chain_from_docs = (
-            RunnablePassthrough.assign(context=(lambda x: format_docs(x["context"])))
+            RunnablePassthrough.assign(formatted_context=(lambda x: format_docs(x["context"])))
+            | RunnablePassthrough.assign(prompt_input=lambda x: {"context": x["formatted_context"], "question": x["question"]})
+            | (lambda x: x["prompt_input"])
             | rag_prompt_template
             | self.llm
             | StrOutputParser()
         )
 
+        # Return full original Document objects with complete metadata
+        # Context field maintains raw documents exactly as retrieved
         rag_chain_with_source = RunnableParallel(
             {"context": self.retriever, "question": RunnablePassthrough()}
         ).assign(answer=rag_chain_from_docs)
