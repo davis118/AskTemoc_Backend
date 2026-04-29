@@ -5,8 +5,6 @@ Backoff retries for transient OpenAI embedding calls and Postgres (Neon) commits
 from __future__ import annotations
 
 import logging
-import random
-import time
 from typing import Callable, TypeVar
 
 from tenacity import (
@@ -66,3 +64,4 @@ def call_openai_embedding_with_retries(fn: Callable[[], T]) -> T:
             rs.outcome.exception() if rs.outcome else "?",
         ),
     )
+    return r(fn)
