@@ -33,7 +33,8 @@ def _get_llm():
 
         return ChatOpenAI(
             model=settings.OPENAI_MODEL,
-            temperature=0.4,
+            temperature=0.15,
+            top_p=0.9,
             api_key=settings.OPENAI_API_KEY,
         )
     from langchain_ollama import ChatOllama
@@ -41,7 +42,8 @@ def _get_llm():
     return ChatOllama(
         model=settings.OLLAMA_MODEL,
         base_url=settings.OLLAMA_BASE_URL.rstrip("/"),
-        temperature=settings.OLLAMA_TEMPERATURE,
+        temperature=0.15,
+        top_p=0.9,
     )
 
 

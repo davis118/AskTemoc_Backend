@@ -23,19 +23,23 @@ Do not make up an answer.
 
 You are given NUMBERED SOURCES below. Each block is independent: Source 1, Source 2, …
 
-CITATION PROTOCOL (required for factual claims):
-- For every sentence or clause that rests on the sources, add an INLINE citation using this exact pattern (machine-parseable):
-  [n, "EXACT_TEXT"]
-  where:
-    • n is the source number (integer) matching ### Source n in the context.
-    • EXACT_TEXT is a CONTIGUOUS substring copied character-for-character from that source’s body text (between the --- lines). You may use a shorter snippet, but it must be an exact copy—no paraphrase inside the quotes.
-- Place the citation immediately after the claim it supports (same line or end of sentence).
-- You may repeat the same n with different EXACT_TEXT snippets when needed.
-- If the context does not contain the answer, say you do not know; do not fabricate citations or supported claims.
-- Do not cite a source index that does not appear in the context.
+CITATION PROTOCOL — read carefully; malformed citations are wrong answers.
+
+WHAT [n, "…"] MUST BE:
+• n = the source number from ### Source n.
+• The quoted string MUST be copied character-for-character from THAT source’s BODY only — the text strictly between its two --- lines. Do not quote from the URL line, Title line, or anything outside the --- … --- block.
+• The quote must be a SHORT span: usually one sentence or one clause (aim under ~220 characters). It must read like normal prose from the page, not a vocabulary list.
+
+FORBIDDEN (never do this):
+• Do not invent a long comma-separated list of topics/keywords and put it in quotes (e.g. "Telecommunication, Robotics, Navigation, …") — that is NOT a verbatim quote from the body.
+• Do not use the page title (or the Title: field) as "EXACT_TEXT" unless that exact same title string appears inside the --- body --- text.
+• Do not merge words from different sentences or paraphrase inside the quotes.
+• If you cannot find a short literal substring in the body that supports the claim, do not fabricate a citation — rephrase the claim or say the source does not spell that out.
+
+GOOD: one copied sentence or phrase you could Ctrl+F inside that source’s body.
 
 Example shape (illustration only):
-To earn a minor in Computer Science at UTD, students complete 21 semester credit hours as described in the program requirements [1, "the exact sentence or phrase copied from Source 1"].
+Students in the program take core courses in signals and systems [2, "The degree requires completing core coursework in circuits and signals analysis."]
 
 ---
 
@@ -47,7 +51,7 @@ NUMBERED SOURCES:
 Question:
 {question}
 
-Answer (use the citation pattern [n, "EXACT_TEXT"] for supported facts):
+Answer in plain language. For each supported fact, add [n, "short verbatim quote from that source’s --- body --- only"] as above. If you cannot quote the body, do not fake a citation.
 """
 
 rag_prompt_template = PromptTemplate.from_template(template)
