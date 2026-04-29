@@ -11,11 +11,18 @@ from app.core.config import get_settings
 def _make_engine():
     settings = get_settings()
     url = settings.DATABASE_URL
-    return create_engine(
-        url,
-        connect_args={"check_same_thread": False} if "sqlite" in url else {},
-        echo=settings.DB_ECHO,
-    )
+    lu = url.lower()
+    kw: dict = {
+        "echo": settings.DB_ECHO,
+    }
+    if "sqlite" in lu:
+        kw["connect_args"] = {"check_same_thread": False}
+    if "postgresql" in lu or "postgres" in lu:
+        kw["pool_pre_ping"] = True
+        kw["pool_recycle"] = 1800
+        # Neon proxies may drop idle connections; recycle + pre-ping reduce surprise disconnects.
+
+    return create_engine(url, **kw)
 
 
 engine = _make_engine()
