@@ -202,6 +202,14 @@ async def chat(request: ChatRequest):
     """
     Answers a question about UTD and streams the response as Server-Sent Events, in FastAPI format.
 
+    Initial start event contains the conversation_id and title.
+    ```json
+    {
+        "type": "start",
+        "conversation_id": "0f8c2b53-4cb7-4ee0-baf1-a12a26fbc716",
+        "title": "BS in Computer Science"
+    }
+    ```
     First, source events are sent in relevance order, max 5, in this format:
     ```json
     {
