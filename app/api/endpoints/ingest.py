@@ -262,6 +262,16 @@ def _upsert_document(
 
 @router.post("/ingest", status_code=status.HTTP_200_OK)
 def ingest(payload: IngestPayload, db: Session = Depends(get_db)):
+    """
+    Ingest the payload into the database.
+    Prefers raw_text, with a fallback to html_content stripped.
+    Priority:
+    If catalog degree pages: do not split onto chunks.
+    If chunks are provided: use them as is.
+    If no chunks are provided: chunk using tiktoken.
+    Truncate to safe max tokens, then embed.
+    Upsert into documents, chunks, and embeddings tables.
+    """
     settings = get_settings()
 
     if not settings.OPENAI_API_KEY:
